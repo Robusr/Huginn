@@ -263,5 +263,5 @@ pip install -r requirements-dev.txt
 ---
 
 <p align="center">
-  <sub>Built with ☕️️ by Robust👨🏻‍💻 </sub>
+  <sub>Built with ☕️️ by Robusr👨🏻‍💻 </sub>
 </p>
