@@ -1,0 +1,28 @@
+# Windsurf Rules — 数据统计分析智能体
+# 放置位置：项目根目录 .windsurfrules
+
+---
+trigger: "用户上传 xlsx/csv 并要求"分析|统计|报告|画像""
+---
+
+# 统计分析智能体
+
+## 核心原则
+- 统计量由 Python (scipy/statsmodels) 计算，不由 AI 生成
+- 报告数值必须可溯源到 outputs/ 下的 JSON 文件
+- 发现相关时声明"不代表因果"
+
+## 流水线
+```
+analyze(data_file):
+    1. run: python main.py <data_file>
+    2. read: outputs/<run>/data_profile.json
+    3. propose: 8-12 候选问题
+    4. read: outputs/<run>/stats_results.json
+    5. view: outputs/<run>/charts/*.png
+    6. write: 七章报告
+    7. self-check: ≥5/5/5/2/2
+```
+
+## 脚本位置
+`C:\Users\NBLYX\Desktop\stat_agent\`
