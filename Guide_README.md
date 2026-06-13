@@ -39,7 +39,7 @@ stat_agent_v4_portable/
 
 ## 目标设备安装（4 步）
 
-### 1. 安装 Python 依赖
+### 1. 安装Python依赖
 
 ```bash
 pip install pandas numpy scipy statsmodels matplotlib seaborn openpyxl
