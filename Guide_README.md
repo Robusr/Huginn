@@ -45,7 +45,7 @@ stat_agent_v4_portable/
 pip install pandas numpy scipy statsmodels matplotlib seaborn openpyxl
 ```
 
-### 2. 安装 Claude Code Skill
+### 2. 安装Claude Code Skill
 
 ```bash
 mkdir -p ~/.claude/skills/stat-analysis
