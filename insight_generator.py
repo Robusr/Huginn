@@ -3,6 +3,7 @@
 自动读取 stats_results.json 和 data_profile.json，
 筛选 P<0.05 的显著发现和强相关特征，
 导出 insights.md 和 insights.json。
+
 """
 
 from __future__ import annotations

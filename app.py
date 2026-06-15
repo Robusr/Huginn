@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 @File    : app.py
-@Author  : Huginn
+@Author  : Robusr
 @Date    : 2026/6/16
 @Description: Streamlit 交互式界面 — 课程问卷分析智能体
               功能：文件上传 → 分析执行 → 结果展示 → 报告下载
@@ -129,7 +129,7 @@ def main():
             st.info("👆 请先上传一个数据文件")
 
         st.divider()
-        st.caption("Built with ❤️ by Huginn Team")
+        st.caption("Built with ☕️ by Robusr👨🏻‍💻 | 2026 © All rights reserved")
         st.caption(f"v1.0 | {datetime.now().year}")
 
     # ── 主区域 ────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 @File    : config.py
-@Author  : Huginn
+@Author  : Robusr
 @Date    : 2026/6/16
 @Description: 集中化配置模块 — 所有硬编码常量统一管理，支持环境变量覆盖
 @Software: PyCharm

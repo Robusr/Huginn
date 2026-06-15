@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 @File    : report_generator.py
-@Author  : Huginn
+@Author  : Robusr
 @Date    : 2026/6/16
 @Description: 完整Markdown报告生成器 — 基于中间JSON结果自动生成7章课程分析报告
 @Software: PyCharm

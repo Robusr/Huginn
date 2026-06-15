@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 @File    : analysis_engine_patch.py
-@Author  : Huginn
+@Author  : Robusr
 @Date    : 2026/6/16
 @Description: 向后兼容 shim — 所有功能已合并至 analysis_engine.AnalysisEngine
 @Software: PyCharm
