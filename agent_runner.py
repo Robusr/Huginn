@@ -20,7 +20,7 @@ from pathlib import Path
 from datetime import datetime
 from data_loader import load_and_clean
 from data_profiler import generate_profile
-from analysis_engine_patch import AnalysisEngine
+from analysis_engine import AnalysisEngine
 from chart_generator import generate_charts
 from llm_client import LLMClient
 from task_planner import TaskPlanner
