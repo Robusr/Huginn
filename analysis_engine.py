@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import json
-import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional, Union
@@ -20,7 +19,8 @@ import statsmodels.api as sm
 from statsmodels.formula.api import ols
 from statsmodels.stats.multicomp import pairwise_tukeyhsd
 
-logger = logging.getLogger(__name__)
+from logger import get_logger
+logger = get_logger(__name__)
 
 
 class AnalysisEngine:
