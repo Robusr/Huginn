@@ -4,10 +4,12 @@
   <img src="https://img.shields.io/badge/Python-3.9+-blue.svg" alt="Python Version">
   <img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License">
   <img src="https://img.shields.io/badge/DeepSeek-API-orange.svg" alt="DeepSeek API">
+  <img src="https://img.shields.io/badge/Tests-35%20passed-success.svg" alt="Tests">
+  <img src="https://img.shields.io/badge/Config-60+%20options-informational.svg" alt="Config">
   <img src="https://img.shields.io/badge/Status-Stable-brightgreen.svg" alt="Status">
 </p>
 
-> **全自动数据分析智能体**：上传 Excel/CSV 表格，自动完成数据清洗 → 统计推断 → 可视化 → 洞察提炼 → **完整报告生成** → 合规性验证。严格遵循"**模型只做决策和解释，所有统计量由 Python 真实计算**"的核心原则，彻底杜绝大模型幻觉。
+> **全自动数据分析智能体**：上传 Excel/CSV 表格，自动完成数据清洗 → 统计推断 → 可视化 → LLM 洞察提炼 → **完整报告生成** → 合规性验证。内置集中化配置管理、统一日志系统、单元测试覆盖。严格遵循"**模型只做决策和解释，所有统计量由 Python 真实计算**"的核心原则，彻底杜绝大模型幻觉。
 
 ## 核心功能
 
@@ -40,7 +42,12 @@
 - **Streamlit 应用**：`streamlit run app.py` 一键启动
 - 支持文件上传、需求输入、离线模式切换
 - 标签页展示：概况 / 图表 / 统计 / 发现 / 建议 / 验证 / 完整报告
-- 一键下载 Markdown 报告、Word 报告、统计结果 JSON
+- 一键下载 Markdown 报告、Word 报告、统计结果 JSON、**ZIP 打包**
+
+### 工程化基础设施 🆕
+- **集中化配置**：`config.py` 管理 60+ 配置项，所有 LLM 参数、统计阈值、UI 标签统一管理，支持环境变量覆盖
+- **统一日志**：`logger.py` 幂等初始化，消除模块 import 时日志静默丢失的问题
+- **单元测试**：35 个测试覆盖 config / data_loader / task_planner，`pytest tests/ -v` 一键运行
 
 ### 多 AI 平台原生支持
 - **DeepSeek API**（默认，中文效果最佳，性价比最高）
@@ -110,6 +117,14 @@ outputs/20260610_143022_课程问卷/
 └── validation_report.md       # 合规性验证报告（Markdown）
 ```
 
+### 7. 运行测试（可选）
+```bash
+# 验证所有模块正常工作
+pytest tests/ -v
+
+# 预期输出：35 passed in 0.30s
+```
+
 ## 使用方法
 
 ### 命令行参数
@@ -138,17 +153,23 @@ python data_loader.py "你的文件.csv"
 # 仅生成数据画像
 python data_profiler.py "你的文件.csv"
 
-# 仅执行统计分析
+# 仅执行统计分析（全量模式）
 python analysis_engine.py "你的文件.csv"
 
 # 仅生成图表
 python chart_generator.py "你的文件.csv"
 
+# 仅提炼显著性洞察（需要已有统计结果）
+python insight_generator.py "outputs/<run_dir>/stats_results.json"
+
 # 仅生成报告（需要已有运行结果）
-python report_generator.py "outputs/20260610_143022_课程问卷" "分析需求"
+python report_generator.py "outputs/<run_dir>" "分析需求"
 
 # 仅验证报告合规性
-python report_validator.py "outputs/20260610_143022_课程问卷"
+python report_validator.py "outputs/<run_dir>"
+
+# 导出 Word 格式报告
+python report_generator.py "outputs/<run_dir>" "分析需求" --format word
 ```
 
 ### 一键全流程（v4 兼容入口，无 LLM）
@@ -232,32 +253,43 @@ huginn/
 - 按优先级排序（ANOVA > 卡方 > t 检验 > 其他）
 - 详细记录每个问题被过滤的原因，便于调试
 
-### 5. 报告生成器 (`report_generator.py`)  — 新增
+### 5. 洞察提炼器 (`insight_generator.py`)
+- 自动读取 `stats_results.json`，筛选 p < 0.05 的显著发现
+- 提取强相关特征，生成可操作的研究问题
+- 支持 JSON 和 Markdown 双格式输出
+- 独立于 LLM，基于规则引擎保证结果确定性
+
+### 6. 报告生成器 (`report_generator.py`)
 - 读取所有中间 JSON 结果，自动组装 7 章完整报告
 - 仅筛选 p < 0.05 的显著统计结果展示
 - 自动插入图表引用，集成合规性验证附录
 - 支持 Markdown（原生）和 Word（python-docx）两种导出格式
 - 可独立运行，也可集成在 agent_runner 管线中
 
-### 6. 报告验证器 (`report_validator.py`)
+### 7. 报告验证器 (`report_validator.py`)
 - 5 大模块 20+ 检查项，覆盖课程作业所有验收标准
 - 100 分制评分体系，60 分及格
 - 自动在管线中运行，结果写入报告附录
 - 输出 JSON 和 Markdown 两种格式
 
-### 7. Web 界面 (`app.py`)  — 新增
+### 8. Web 界面 (`app.py`)
 - 基于 Streamlit 的交互式分析界面
 - 支持文件上传、需求输入、离线模式切换
 - 标签页展示所有分析结果（概况 / 图表 / 统计 / 发现 / 建议 / 验证 / 完整报告）
 - 一键下载 Markdown 报告、Word 报告、统计结果 JSON、ZIP 打包
 
-### 8. 集中配置 (`config.py`)  — 🆕
+### 9. 集中配置 (`config.py`)  — 🆕
 - 所有硬编码常量集中管理，支持环境变量覆盖
 - 涵盖 LLM 参数、任务阈值、显著性水平、禁止词汇、UI 标签等 60+ 配置项
 - 修改 `config.py` 即可全局生效，无需逐个文件查找修改
 - 关键环境变量：`LLM_MODEL`、`LLM_MAX_RETRIES`、`LLM_TEMPERATURE`、`TASK_MIN_COUNT` 等
 
-### 9. 统一日志 (`logger.py`)  — 🆕
+### 10. 统一日志 (`logger.py`)  — 🆕
+
+### 11. 一键入口 (`main.py`)
+- 无 LLM 依赖的纯统计管线：加载 → 画像 → 分析 → 图表 → 洞察
+- 供 CI/CD 或无法访问 API 的环境使用
+- 输出与 `agent_runner.py` 兼容的标准化 JSON 结果
 - 幂等 `get_logger(name)` 函数，确保 `basicConfig` 仅执行一次
 - 所有模块共享统一的日志格式：`时间 [级别] 模块名: 消息`
 - 解决模块被 import 时日志静默丢失的问题
@@ -266,18 +298,18 @@ huginn/
 ## 课程作业验收标准
 本项目严格按照以下标准设计，确保生成的报告 100% 符合要求：
 
-| 检查项 | 最低要求 |
-|--------|----------|
-| 点估计 | ≥5 个 |
-| 区间估计 | ≥5 个 |
-| 假设检验 | ≥5 类 |
-| 方差分析 (ANOVA) | ≥2 项 |
-| 卡方检验 | ≥2 个 |
-| 数据发现 | ≥5 条 |
-| 课程建议 | ≥3 条 |
-| 可视化图表 | ≥3 张 |
-| 局限性说明 | 必须包含 |
-| 因果关系 | 禁止将相关性表述为因果关系 |
+| 检查项 | 最低要求 | 对应 Config 键 |
+|--------|----------|---------------|
+| 点估计 | ≥5 个 | `REQUIREMENTS["point_estimation_min"]` |
+| 区间估计 | ≥5 个 | `REQUIREMENTS["interval_estimation_min"]` |
+| 假设检验 | ≥5 类 | `REQUIREMENTS["hypothesis_test_min"]` |
+| 方差分析 (ANOVA) | ≥2 项 | `REQUIREMENTS["anova_min"]` |
+| 卡方检验 | ≥2 个 | `REQUIREMENTS["chi_square_min"]` |
+| 数据发现 | ≥5 条 | — |
+| 课程建议 | ≥3 条 | — |
+| 可视化图表 | ≥3 张 | — |
+| 局限性说明 | 必须包含 | — |
+| 因果关系 | 禁止将相关性表述为因果关系 | `CAUSAL_WORDS`（禁止词汇列表） |
 
 ## 常见问题
 
@@ -333,22 +365,54 @@ python agent_runner.py "数据.csv" "分析需求"
 ```
 更多可配置项参见 `config.py`，所有配置均支持 `KEY=VALUE` 环境变量覆盖。
 
-### Q: 如何运行测试？
-A:
+### Q: 如何切换到其他 LLM 提供商（如 OpenAI）？
+A: 项目使用 OpenAI 兼容 SDK，切换只需修改环境变量：
 ```bash
-# 安装测试依赖（pytest 已包含在 requirements.txt 中）
-pip install -r requirements.txt
-
-# 运行全部测试
-pytest tests/ -v
-
-# 运行特定模块测试
-pytest tests/test_config.py -v
-pytest tests/test_task_planner.py -v
-pytest tests/test_data_loader.py -v
+export DEEPSEEK_BASE_URL=https://api.openai.com/v1   # OpenAI 或其他兼容端点
+export LLM_MODEL=gpt-4o                               # 模型名
+export DEEPSEEK_API_KEY=sk-your-openai-key            # API Key
 ```
+任何兼容 OpenAI API 格式的服务（如 Groq、Together、vLLM 等）均可直接使用。
+
+### Q: 如何贡献代码？
+A: 欢迎提交 Issue 和 Pull Request！贡献前请：
+1. 阅读下方 [开发指南](#开发指南)
+2. 确保 `pytest tests/ -v` 全部通过（预期 35 passed）
+3. 遵循 PEP 8 代码规范，使用类型注解
+4. 新增功能需补充对应测试用例
+
+### Q: 如何运行测试？
+A: 测试依赖已包含在 `requirements.txt` 中（`pytest>=7.0`）：
+```bash
+pytest tests/ -v              # 全部测试（预期 35 passed）
+pytest tests/ -v --tb=short   # 简洁输出模式
+```
+详见下方 [开发指南 → 运行测试](#运行测试)。
 
 ## 🛠️ 开发指南
+
+### 项目架构
+
+```
+┌──────────────────────────────────────────────────────────┐
+│                     入口层                               │
+│  agent_runner.py (9步管线)    main.py (5步无LLM管线)     │
+│  app.py (Streamlit Web)                                  │
+└──────────┬──────────┬──────────┬────────────┬───────────┘
+           │          │          │            │
+    ┌──────▼──┐ ┌─────▼────┐ ┌──▼──────┐ ┌───▼──────────┐
+    │数据层   │ │智能层    │ │报告层   │ │基础设施层     │
+    │loader   │ │llm_client│ │report   │ │config.py      │
+    │profiler │ │planner   │ │generator│ │logger.py      │
+    │engine   │ │insight   │ │validator│ │tests/         │
+    │charts   │ │          │ │         │ │               │
+    └─────────┘ └──────────┘ └─────────┘ └───────────────┘
+```
+
+- **数据层**：数据加载 → 画像 → 统计计算 → 图表生成（纯 Python，无 LLM 依赖）
+- **智能层**：LLM 生成候选问题 → 任务筛选 → 执行 → 发现与建议提炼
+- **报告层**：读取中间 JSON → 组装 7 章报告 → 合规性验证 → 导出 Markdown/Word
+- **基础设施层**：配置管理、日志系统、单元测试
 
 ### 环境搭建
 ```bash
