@@ -60,5 +60,4 @@ outputs/
 *.docx
 *.xlsx
 *.csv
-test_*.py
 debug_*.py
