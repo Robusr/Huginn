@@ -172,13 +172,15 @@ huginn/
 ├── agent_runner.py              # 智能体主流程控制器（9步完整管线）
 ├── report_generator.py          # 完整报告生成器（Markdown + Word）
 ├── app.py                       # Streamlit 交互式 Web 界面
+├── config.py                    # 🆕 集中化配置管理（支持环境变量覆盖）
+├── logger.py                    # 🆕 统一日志模块（幂等初始化）
 ├── llm_client.py                # DeepSeek API 封装（结构化输出）
 ├── task_planner.py              # 任务筛选与校验器
-├── analysis_engine_patch.py     # 统计引擎扩展（按需执行模式）
+├── analysis_engine.py           # 核心统计分析引擎（全量 + 按需双模式）
+├── analysis_engine_patch.py     # 向后兼容 shim（已合并至 analysis_engine.py）
 ├── report_validator.py          # 报告合规性验证器（100分制）
 ├── data_loader.py               # 数据加载与清洗（成员A）
 ├── data_profiler.py             # 数据画像生成（成员A）
-├── analysis_engine.py           # 核心统计分析引擎（成员A）
 ├── chart_generator.py           # 可视化图表生成（成员A）
 ├── insight_generator.py         # 基础洞察提炼（成员A）
 ├── main.py                      # 一键全流程入口（v4兼容，无LLM）
@@ -186,6 +188,11 @@ huginn/
 ├── .gitignore                   # Git 忽略文件
 ├── requirements.txt             # 依赖清单
 ├── README.md                    # 本文件
+├── tests/                       # 🆕 单元测试
+│   ├── conftest.py              # 共享测试夹具
+│   ├── test_config.py           # 配置模块测试
+│   ├── test_data_loader.py      # 数据加载测试
+│   └── test_task_planner.py     # 任务筛选测试
 ├── platforms/                   # 各 AI 平台适配文件
 │   ├── cursor/
 │   ├── copilot/
@@ -205,17 +212,19 @@ huginn/
 - 自动推断数据类型（数值 / 日期 / 分类）
 - 支持 Excel（.xlsx / .xls）和 CSV 格式
 
-### 2. 统计分析引擎 (`analysis_engine.py` + `analysis_engine_patch.py`)
+### 2. 统计分析引擎 (`analysis_engine.py`)
+- **双模式**：`run_all()` 全量分析 + `run_tasks(tasks)` 按需执行，统一入口
 - 基于 scipy 和 statsmodels 实现所有统计方法
 - 内置数量自查机制，确保满足最低统计要求
 - 所有结果可溯源，自动保存完整计算过程
-- 支持全量分析和按需执行两种模式
+- `analysis_engine_patch.py` 为向后兼容 shim，实际逻辑已合并至主引擎
 
 ### 3. LLM 客户端 (`llm_client.py`)
 - 封装 DeepSeek API，支持结构化输出（Pydantic v2）
-- 自动处理速率限制和超时重试
+- 自动处理速率限制和超时重试（重试次数、延迟等由 `config.py` 统一管理）
 - 内置离线模式，用于无网络环境演示
 - 严格的提示词约束，杜绝幻觉和编造数据
+- 所有参数（模型、温度、最大 token 等）通过 `Config` 类读取，支持环境变量覆盖
 
 ### 4. 任务筛选器 (`task_planner.py`)
 - 严格校验 LLM 提出的问题，过滤不可执行的任务
@@ -240,7 +249,19 @@ huginn/
 - 基于 Streamlit 的交互式分析界面
 - 支持文件上传、需求输入、离线模式切换
 - 标签页展示所有分析结果（概况 / 图表 / 统计 / 发现 / 建议 / 验证 / 完整报告）
-- 一键下载 Markdown 报告、Word 报告、统计结果 JSON
+- 一键下载 Markdown 报告、Word 报告、统计结果 JSON、ZIP 打包
+
+### 8. 集中配置 (`config.py`)  — 🆕
+- 所有硬编码常量集中管理，支持环境变量覆盖
+- 涵盖 LLM 参数、任务阈值、显著性水平、禁止词汇、UI 标签等 60+ 配置项
+- 修改 `config.py` 即可全局生效，无需逐个文件查找修改
+- 关键环境变量：`LLM_MODEL`、`LLM_MAX_RETRIES`、`LLM_TEMPERATURE`、`TASK_MIN_COUNT` 等
+
+### 9. 统一日志 (`logger.py`)  — 🆕
+- 幂等 `get_logger(name)` 函数，确保 `basicConfig` 仅执行一次
+- 所有模块共享统一的日志格式：`时间 [级别] 模块名: 消息`
+- 解决模块被 import 时日志静默丢失的问题
+- 输出至 stderr，与用户界面 `print()` 输出互不干扰
 
 ## 课程作业验收标准
 本项目严格按照以下标准设计，确保生成的报告 100% 符合要求：
@@ -294,6 +315,39 @@ streamlit run app.py
 ```
 然后在浏览器打开 `http://localhost:8501`，上传文件即可开始分析。
 
+### Q: 如何自定义 LLM 参数（模型、温度等）？
+A: 无需修改代码，通过环境变量即可覆盖默认值：
+```bash
+# 使用不同的模型
+export LLM_MODEL=deepseek-reasoner
+
+# 调整重试次数和延迟
+export LLM_MAX_RETRIES=5
+export LLM_RETRY_DELAY=5
+
+# 调整输出温度（0-1，越低越稳定）
+export LLM_TEMPERATURE=0.1
+
+# 然后正常运行
+python agent_runner.py "数据.csv" "分析需求"
+```
+更多可配置项参见 `config.py`，所有配置均支持 `KEY=VALUE` 环境变量覆盖。
+
+### Q: 如何运行测试？
+A:
+```bash
+# 安装测试依赖（pytest 已包含在 requirements.txt 中）
+pip install -r requirements.txt
+
+# 运行全部测试
+pytest tests/ -v
+
+# 运行特定模块测试
+pytest tests/test_config.py -v
+pytest tests/test_task_planner.py -v
+pytest tests/test_data_loader.py -v
+```
+
 ## 🛠️ 开发指南
 
 ### 环境搭建
@@ -316,13 +370,46 @@ pip install -r requirements.txt
 - 使用类型注解
 - 编写详细的文档字符串
 - 提交前运行代码格式化：`black .`
+- 提交前运行测试：`pytest tests/ -v`
+
+### 运行测试
+```bash
+# 全部测试
+pytest tests/ -v
+
+# 指定模块
+pytest tests/test_config.py -v
+pytest tests/test_data_loader.py -v
+pytest tests/test_task_planner.py -v
+```
+测试覆盖：
+- `test_config.py` — Config 默认值 + 环境变量覆盖（11 个测试）
+- `test_data_loader.py` — CSV/编码/中文/异常场景（9 个测试）
+- `test_task_planner.py` — 验证逻辑 + 筛选流程 + 优先级排序（15 个测试）
+
+### 配置管理
+所有硬编码值均由 `config.py` 中的 `Config` 类集中管理。修改默认值或通过环境变量覆盖：
+```bash
+# 查看所有可配置项
+grep "env(" config.py
+
+# 通过环境变量覆盖（示例）
+export LLM_MODEL=deepseek-chat        # LLM 模型名
+export LLM_MAX_RETRIES=3              # API 最大重试次数
+export TASK_MIN_COUNT=5               # 最少分析任务数
+export TASK_MAX_COUNT=10              # 最多分析任务数
+export OUTPUT_DIR=./outputs           # 结果输出目录
+export SIGNIFICANCE_THRESHOLD=0.05    # 显著性阈值
+```
 
 ### 扩展功能
-- **添加新的统计方法**：修改 `analysis_engine.py`，在 `AnalysisEngine` 类中添加对应方法
+- **修改默认参数**：编辑 `config.py` 中的 `Config` 类属性
+- **添加新的统计方法**：修改 `analysis_engine.py`，在 `AnalysisEngine` 类中添加对应方法，并在 `_METHOD_DISPATCH` 字典中注册
 - **适配其他 LLM API**：修改 `llm_client.py`，实现对应的 API 调用逻辑
 - **添加新的图表类型**：修改 `chart_generator.py`，添加对应的绘图方法
 - **扩展报告模板**：修改 `report_generator.py` 中的章节渲染方法
 - **自定义 Streamlit 界面**：修改 `app.py`，添加新的标签页或组件
+- **添加测试**：在 `tests/` 目录下新建 `test_*.py`，参考 `conftest.py` 中的 fixture
 
 ## 许可证
 本项目采用 MIT 许可证，详情请参见 [LICENSE](LICENSE) 文件。
