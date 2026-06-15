@@ -7,41 +7,54 @@
   <img src="https://img.shields.io/badge/Status-Stable-brightgreen.svg" alt="Status">
 </p>
 
->  **全自动数据分析智能体**：上传Excel/CSV表格，自动完成数据清洗、统计推断、可视化、洞察提炼和报告生成。严格遵循"**模型只做决策和解释，所有统计量由Python真实计算**"的核心原则，彻底杜绝大模型幻觉。
+> **全自动数据分析智能体**：上传 Excel/CSV 表格，自动完成数据清洗 → 统计推断 → 可视化 → 洞察提炼 → **完整报告生成** → 合规性验证。严格遵循"**模型只做决策和解释，所有统计量由 Python 真实计算**"的核心原则，彻底杜绝大模型幻觉。
 
-##  核心功能
+## 核心功能
 
-###  全自动探索型分析
-无需指定分析问题，智能体自动理解数据结构，主动发现值得研究的业务问题，并用统计方法验证。
+### 全自动探索型分析（9步完整管线）
+无需指定分析问题，智能体自动理解数据结构，主动发现值得研究的业务问题，用统计方法验证，并**一键生成完整的 7 章课程分析报告**。
 
-###  学术级统计分析
--  点估计（均值、方差、标准差、中位数等10个参数）
--  区间估计（均值、方差、标准差、中位数、预测区间）
--  6类假设检验（t检验、配对t检验、Wilcoxon、Mann-Whitney等）
--  单因素/双因素方差分析（ANOVA）+ Tukey事后检验
--  皮尔逊卡方检验（拟合优度+独立性检验）
--  正态性检验（Shapiro-Wilk + D'Agostino-Pearson）
+### 学术级统计分析
+- 点估计（均值、方差、标准差、中位数等 10 个参数）
+- 区间估计（均值、方差、标准差、中位数、预测区间）
+- 6 类假设检验（t 检验、配对 t 检验、Wilcoxon、Mann-Whitney 等）
+- 单因素/双因素方差分析（ANOVA）+ Tukey 事后检验
+- 皮尔逊卡方检验（拟合优度 + 独立性检验）
+- 正态性检验（Shapiro-Wilk + D'Agostino-Pearson）
 
-###  多AI平台原生支持
--  **DeepSeek API**（默认，中文效果最佳，性价比最高）
--  适配Claude Code、Cursor、GitHub Copilot、Windsurf、Aider等主流AI助手
--  离线演示模式，无需API也能运行
+### 自动报告生成
+- **7 章完整 Markdown 报告**：数据来源 → 数据概况 → 描述性统计 → 统计推断 → 数据发现 → 改进建议 → 局限性说明
+- **附录**：自动集成合规性验证得分和各模块详细结果
+- **Word 导出**：支持一键导出 `.docx` 格式报告
+- 所有统计量可溯源至 JSON 原始结果，杜绝编造
 
-###  自动合规性验证
-内置课程作业专用验证器，自动检查是否满足所有验收标准：
-- 统计数量硬指标（≥5点估计/≥5区间估计/≥5假设检验/≥2ANOVA/≥2卡方）
-- 结果有效性（p值范围、样本量、无编造数据）
+### 自动合规性验证
+内置课程作业专用验证器，分析完成后自动运行并写入报告附录：
+- 统计数量硬指标（≥5 点估计 / ≥5 区间估计 / ≥5 假设检验 / ≥2 ANOVA / ≥2 卡方）
+- 结果有效性（p 值范围、样本量、无编造数据）
 - 发现合规性（无因果错误、无模糊表述、引用正确）
 - 建议合理性（有数据依据、可落地）
+- 100 分制，60 分及格
 
-###  专业可视化
+### 交互式 Web 界面
+- **Streamlit 应用**：`streamlit run app.py` 一键启动
+- 支持文件上传、需求输入、离线模式切换
+- 标签页展示：概况 / 图表 / 统计 / 发现 / 建议 / 验证 / 完整报告
+- 一键下载 Markdown 报告、Word 报告、统计结果 JSON
+
+### 多 AI 平台原生支持
+- **DeepSeek API**（默认，中文效果最佳，性价比最高）
+- 适配 Claude Code、Cursor、GitHub Copilot、Windsurf、Aider 等主流 AI 助手
+- 离线演示模式，无需 API 也能运行
+
+### 专业可视化
 自动生成柱状图、箱线图、散点图、相关性热力图，已修复中文乱码问题。
 
-##  快速开始
+## 快速开始
 
 ### 环境要求
 - Python 3.9+
-- （可选）DeepSeek API Key（从[DeepSeek开放平台](https://platform.deepseek.com/)获取）
+- （可选）DeepSeek API Key（从 [DeepSeek 开放平台](https://platform.deepseek.com/) 获取）
 
 ### 1. 克隆仓库
 ```bash
@@ -54,51 +67,67 @@ cd huginn
 pip install -r requirements.txt
 ```
 
-### 3. 配置API密钥
+### 3. 配置 API 密钥
 ```bash
 # 复制环境变量模板
 cp .env.example .env
 
-# 编辑.env文件，填入你的DeepSeek API Key
+# 编辑 .env 文件，填入你的 DeepSeek API Key
 # DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
 ### 4. 运行智能体
 ```bash
-# 在线模式（调用DeepSeek API）
+# 在线模式（调用 DeepSeek API，推荐）
 python agent_runner.py "你的课程问卷.csv" "为下一次上课的老师生成课程建议报告"
 
-# 离线模式（不调用API，用于演示）
+# 离线模式（不调用 API，用于演示和测试）
 python agent_runner.py "你的课程问卷.csv" "为下一次上课的老师生成课程建议报告" --offline
 ```
 
-### 5. 查看结果
-运行完成后，所有结果会保存在`outputs/YYYYMMDD_HHMMSS_文件名/`目录下：
+### 5. 启动 Web 界面（可选）
+```bash
+streamlit run app.py
+```
+
+### 6. 查看结果
+运行完成后，所有结果保存在 `outputs/YYYYMMDD_HHMMSS_文件名/` 目录下：
 ```
 outputs/20260610_143022_课程问卷/
-├── data_profile.json      # 数据画像
-├── stats_results.json     # 完整统计结果
-├── valid_tasks.json       # 已执行的分析任务
-├── findings.json          # 核心数据发现
-├── suggestions.json       # 课程改进建议
-├── charts/                # 可视化图表
+├── data_profile.json          # 数据画像
+├── stats_results.json         # 完整统计结果
+├── valid_tasks.json           # 已执行的分析任务
+├── findings.json              # 核心数据发现（LLM 生成）
+├── suggestions.json           # 课程改进建议（LLM 生成）
+├── charts/                    # 可视化图表
 │   ├── bar_chart.png
 │   ├── box_plot.png
 │   ├── scatter_plot.png
 │   └── correlation_heatmap.png
-├── validation_result.json # 合规性验证结果
-└── validation_report.md   # 验证报告（Markdown）
+├── final_report.md            # 完整课程分析报告（7章 + 附录）
+├── final_report.docx          # Word 格式报告（可选导出）
+├── validation_result.json     # 合规性验证结果（JSON）
+└── validation_report.md       # 合规性验证报告（Markdown）
 ```
 
-##  使用方法
+## 使用方法
 
 ### 命令行参数
 ```bash
 python agent_runner.py <数据文件路径> <分析需求> [选项]
 
 选项：
-  --offline    离线模式，不调用API，使用预生成结果演示
+  --offline    离线模式，不调用 API，使用预生成结果演示
   --help       显示帮助信息
+```
+
+### 生成报告（独立运行）
+```bash
+# 从已有的运行结果生成 Markdown 报告
+python report_generator.py "outputs/20260610_143022_课程问卷" "为下一次上课的老师生成课程建议报告"
+
+# 导出 Word 格式
+python report_generator.py "outputs/20260610_143022_课程问卷" "为下一次上课的老师生成课程建议报告" --format word
 ```
 
 ### 单独运行模块
@@ -115,110 +144,155 @@ python analysis_engine.py "你的文件.csv"
 # 仅生成图表
 python chart_generator.py "你的文件.csv"
 
+# 仅生成报告（需要已有运行结果）
+python report_generator.py "outputs/20260610_143022_课程问卷" "分析需求"
+
 # 仅验证报告合规性
 python report_validator.py "outputs/20260610_143022_课程问卷"
 ```
 
-### 与AI助手集成
-本项目原生支持所有主流AI编程助手，只需复制对应平台的配置文件即可：
+### 一键全流程（v4 兼容入口，无 LLM）
+```bash
+python main.py "你的文件.csv"
+```
+
+### 与 AI 助手集成
+本项目原生支持所有主流 AI 编程助手，只需复制对应平台的配置文件即可：
+- **Claude Code**: 安装 Skill：`cp skill/SKILL.md ~/.claude/skills/stat-analysis/`
 - **Cursor**: 复制 `platforms/cursor/.cursorrules` 到项目根目录
 - **GitHub Copilot**: 复制 `platforms/copilot/.github-copilot-instructions.md` 到 `.github/`
-- **Claude Code**: 安装Skill：`cp skill/SKILL.md ~/.claude/skills/stat-analysis/`
 - **Windsurf**: 复制 `platforms/windsurf/.windsurfrules` 到项目根目录
+- **Aider**: `aider --conventions platforms/aider/CONVENTIONS.md`
+- **Continue.dev**: 合并 `platforms/continue_dev/config.json` 到 `~/.continue/config.json`
+- **ChatGPT / DeepSeek / Kimi**: 打开 `platforms/general/COPY_PASTE_PROMPT.txt`，全文复制粘贴到对话框
 
-##  项目结构
+## 项目结构
 ```
 huginn/
-├── 📄 agent_runner.py          # 智能体主流程控制器（成员B）
-├── 📄 llm_client.py            # DeepSeek API封装（成员B）
-├── 📄 task_planner.py          # 任务筛选与校验器（成员B）
-├── 📄 analysis_engine_patch.py # 统计引擎扩展（成员B）
-├── 📄 report_validator.py      # 报告合规性验证器（成员B）
-├── 📄 data_loader.py           # 数据加载与清洗（成员A）
-├── 📄 data_profiler.py         # 数据画像生成（成员A）
-├── 📄 analysis_engine.py       # 核心统计分析引擎（成员A）
-├── 📄 chart_generator.py       # 可视化图表生成（成员A）
-├── 📄 insight_generator.py     # 基础洞察提炼（成员A）
-├── 📄 main.py                  # 一键全流程入口（兼容旧版）
-├── 📄 .env.example             # 环境变量模板
-├── 📄 .gitignore               # Git忽略文件
-├── 📄 requirements.txt         # 依赖清单
-├── 📄 README.md                # 本文件
-├── 📂 platforms/               # 各AI平台适配文件
+├── agent_runner.py              # 智能体主流程控制器（9步完整管线）
+├── report_generator.py          # 完整报告生成器（Markdown + Word）
+├── app.py                       # Streamlit 交互式 Web 界面
+├── llm_client.py                # DeepSeek API 封装（结构化输出）
+├── task_planner.py              # 任务筛选与校验器
+├── analysis_engine_patch.py     # 统计引擎扩展（按需执行模式）
+├── report_validator.py          # 报告合规性验证器（100分制）
+├── data_loader.py               # 数据加载与清洗（成员A）
+├── data_profiler.py             # 数据画像生成（成员A）
+├── analysis_engine.py           # 核心统计分析引擎（成员A）
+├── chart_generator.py           # 可视化图表生成（成员A）
+├── insight_generator.py         # 基础洞察提炼（成员A）
+├── main.py                      # 一键全流程入口（v4兼容，无LLM）
+├── .env.example                 # 环境变量模板
+├── .gitignore                   # Git 忽略文件
+├── requirements.txt             # 依赖清单
+├── README.md                    # 本文件
+├── platforms/                   # 各 AI 平台适配文件
 │   ├── cursor/
 │   ├── copilot/
 │   ├── windsurf/
 │   ├── aider/
 │   ├── continue_dev/
 │   └── general/
-├── 📂 skill/                   # Claude Code Skill定义
-└── 📂 outputs/                 # 运行结果输出目录
+├── skill/                       # Claude Code Skill 定义
+└── outputs/                     # 运行结果输出目录
 ```
 
-##  核心模块说明
+## 核心模块说明
 
 ### 1. 数据加载与清洗 (`data_loader.py`)
-- 自动识别CSV编码（utf-8/gbk/gb18030）和分隔符
+- 自动识别 CSV 编码（utf-8 / gbk / gb18030）和分隔符
 - 自动清洗表头、处理空行和缺失值
-- 自动推断数据类型（数值/日期/分类）
-- 支持Excel（.xlsx/.xls）和CSV格式
+- 自动推断数据类型（数值 / 日期 / 分类）
+- 支持 Excel（.xlsx / .xls）和 CSV 格式
 
-### 2. 统计分析引擎 (`analysis_engine.py`)
-- 基于scipy和statsmodels实现所有统计方法
+### 2. 统计分析引擎 (`analysis_engine.py` + `analysis_engine_patch.py`)
+- 基于 scipy 和 statsmodels 实现所有统计方法
 - 内置数量自查机制，确保满足最低统计要求
 - 所有结果可溯源，自动保存完整计算过程
-- 支持按需执行指定任务和全量分析两种模式
+- 支持全量分析和按需执行两种模式
 
-### 3. LLM客户端 (`llm_client.py`)
-- 封装DeepSeek API，支持结构化输出
+### 3. LLM 客户端 (`llm_client.py`)
+- 封装 DeepSeek API，支持结构化输出（Pydantic v2）
 - 自动处理速率限制和超时重试
 - 内置离线模式，用于无网络环境演示
 - 严格的提示词约束，杜绝幻觉和编造数据
 
 ### 4. 任务筛选器 (`task_planner.py`)
-- 严格校验LLM提出的问题，过滤不可执行的任务
+- 严格校验 LLM 提出的问题，过滤不可执行的任务
 - 自动补充默认任务，确保满足统计数量要求
-- 按优先级排序任务，优先执行高价值分析
+- 按优先级排序（ANOVA > 卡方 > t 检验 > 其他）
 - 详细记录每个问题被过滤的原因，便于调试
 
-### 5. 报告验证器 (`report_validator.py`)
-- 5大模块20+检查项，覆盖课程作业所有验收标准
-- 100分制评分体系，60分及格
-- 生成详细的改进建议，指导优化报告
-- 输出JSON和Markdown两种格式的验证报告
+### 5. 报告生成器 (`report_generator.py`)  — 新增
+- 读取所有中间 JSON 结果，自动组装 7 章完整报告
+- 仅筛选 p < 0.05 的显著统计结果展示
+- 自动插入图表引用，集成合规性验证附录
+- 支持 Markdown（原生）和 Word（python-docx）两种导出格式
+- 可独立运行，也可集成在 agent_runner 管线中
 
-##  课程作业验收标准
-本项目严格按照以下标准设计，确保生成的报告100%符合要求：
+### 6. 报告验证器 (`report_validator.py`)
+- 5 大模块 20+ 检查项，覆盖课程作业所有验收标准
+- 100 分制评分体系，60 分及格
+- 自动在管线中运行，结果写入报告附录
+- 输出 JSON 和 Markdown 两种格式
+
+### 7. Web 界面 (`app.py`)  — 新增
+- 基于 Streamlit 的交互式分析界面
+- 支持文件上传、需求输入、离线模式切换
+- 标签页展示所有分析结果（概况 / 图表 / 统计 / 发现 / 建议 / 验证 / 完整报告）
+- 一键下载 Markdown 报告、Word 报告、统计结果 JSON
+
+## 课程作业验收标准
+本项目严格按照以下标准设计，确保生成的报告 100% 符合要求：
 
 | 检查项 | 最低要求 |
 |--------|----------|
-| 点估计 | ≥5个 |
-| 区间估计 | ≥5个 |
-| 假设检验 | ≥5类 |
-| 方差分析(ANOVA) | ≥2项 |
-| 卡方检验 | ≥2个 |
-| 数据发现 | ≥5条 |
-| 课程建议 | ≥3条 |
-| 可视化图表 | ≥3张 |
+| 点估计 | ≥5 个 |
+| 区间估计 | ≥5 个 |
+| 假设检验 | ≥5 类 |
+| 方差分析 (ANOVA) | ≥2 项 |
+| 卡方检验 | ≥2 个 |
+| 数据发现 | ≥5 条 |
+| 课程建议 | ≥3 条 |
+| 可视化图表 | ≥3 张 |
 | 局限性说明 | 必须包含 |
 | 因果关系 | 禁止将相关性表述为因果关系 |
 
-##  常见问题
+## 常见问题
 
-### Q: 运行提示ModuleNotFoundError怎么办？
+### Q: 运行提示 ModuleNotFoundError 怎么办？
 A: 确保已安装所有依赖：`pip install -r requirements.txt`
 
-### Q: DeepSeek API调用失败怎么办？
-A: 检查API Key是否正确，网络是否正常，或使用`--offline`参数运行离线模式。
+### Q: DeepSeek API 调用失败怎么办？
+A: 检查 API Key 是否正确，网络是否正常，或使用 `--offline` 参数运行离线模式。
 
 ### Q: 图表中文显示方块怎么办？
-A: `chart_generator.py`已自动配置中文字体。如仍无效，将`C:\Windows\Fonts\simhei.ttf`复制到目标设备同路径。
+A: `chart_generator.py` 已自动搜索并配置系统中文字体（macOS PingFang / Windows SimHei / Linux Noto CJK）。如果仍无效，可手动安装中文字体后重试。
 
 ### Q: 统计数量不达标怎么办？
-A: 任务筛选器会自动补充默认任务。如果仍不达标，检查数据中是否有足够的数值列和分类列（至少3个数值列、2个多分类列、1个二分类列）。
+A: 任务筛选器会自动补充默认任务。如果仍不达标，检查数据中是否有足够的数值列和分类列（至少 3 个数值列、2 个多分类列、1 个二分类列）。
 
 ### Q: 生成的发现和建议质量不高怎么办？
-A: 优化用户需求描述，提供更明确的业务背景；或调整`llm_client.py`中的提示词。
+A: 优化用户需求描述，提供更明确的业务背景；或调整 `llm_client.py` 中的提示词。
+
+### Q: 如何导出 Word 报告？
+A:
+```bash
+# 方式1：在 agent_runner 运行后单独导出
+python report_generator.py "outputs/<运行目录>" "分析需求" --format word
+
+# 方式2：在 Python 代码中调用
+from report_generator import ReportGenerator
+gen = ReportGenerator("outputs/<运行目录>", "分析需求")
+gen.export_word("final_report.docx")
+```
+
+### Q: 如何启动 Web 界面？
+A:
+```bash
+streamlit run app.py
+```
+然后在浏览器打开 `http://localhost:8501`，上传文件即可开始分析。
 
 ## 🛠️ 开发指南
 
@@ -233,23 +307,25 @@ source .venv/bin/activate
 # Windows
 .venv\Scripts\activate
 
-# 安装开发依赖
-pip install -r requirements-dev.txt
+# 安装依赖
+pip install -r requirements.txt
 ```
 
 ### 代码规范
-- 遵循PEP 8代码规范
+- 遵循 PEP 8 代码规范
 - 使用类型注解
 - 编写详细的文档字符串
 - 提交前运行代码格式化：`black .`
 
 ### 扩展功能
-- **添加新的统计方法**：修改`analysis_engine.py`，在`AnalysisEngine`类中添加对应的方法
-- **适配其他LLM API**：修改`llm_client.py`，实现对应的API调用逻辑
-- **添加新的图表类型**：修改`chart_generator.py`，添加对应的绘图方法
+- **添加新的统计方法**：修改 `analysis_engine.py`，在 `AnalysisEngine` 类中添加对应方法
+- **适配其他 LLM API**：修改 `llm_client.py`，实现对应的 API 调用逻辑
+- **添加新的图表类型**：修改 `chart_generator.py`，添加对应的绘图方法
+- **扩展报告模板**：修改 `report_generator.py` 中的章节渲染方法
+- **自定义 Streamlit 界面**：修改 `app.py`，添加新的标签页或组件
 
-##  许可证
-本项目采用MIT许可证，详情请参见[LICENSE](LICENSE)文件。
+## 许可证
+本项目采用 MIT 许可证，详情请参见 [LICENSE](LICENSE) 文件。
 
 ---
 
