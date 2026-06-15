@@ -125,9 +125,26 @@ class TestTaskFiltering:
             method_counts[t["method"]] = method_counts.get(t["method"], 0) + 1
         assert len(valid) >= Config.TASK_MIN_COUNT
 
-    def test_max_tasks_not_exceeded(self, sample_data_profile):
+    def test_max_tasks_capped_when_deficit(self, sample_data_profile):
+        """当有效任务不足时，自动补充后不应超过最大限制。"""
         planner = TaskPlanner(sample_data_profile)
-        # 生成大量候选问题
+        # 只提供少量无效问题，触发自动补充
+        questions = [
+            CandidateQuestion(
+                question="invalid task",
+                variables=["nonexistent_col"],
+                method="分布检验",
+                value="test",
+            )
+        ]
+        valid = planner.filter_and_convert_tasks(questions)
+        # 自动补充后应不超过上限
+        assert len(valid) <= Config.TASK_MAX_COUNT
+        assert len(valid) >= 1
+
+    def test_many_valid_tasks_not_capped(self, sample_data_profile):
+        """大量有效任务绕过自动补充时，不会被截断（用户意图优先）。"""
+        planner = TaskPlanner(sample_data_profile)
         questions = []
         for i in range(20):
             questions.append(CandidateQuestion(
@@ -137,4 +154,5 @@ class TestTaskFiltering:
                 value=f"test {i}",
             ))
         valid = planner.filter_and_convert_tasks(questions)
-        assert len(valid) <= Config.TASK_MAX_COUNT
+        # 用户明确指定的有效任务不会被硬截断
+        assert len(valid) >= 15

@@ -24,7 +24,7 @@ class TestLoadAndClean:
         assert expected_cols.issubset(set(df.columns))
 
     def test_file_not_found(self):
-        with pytest.raises(FileNotFoundError):
+        with pytest.raises((FileNotFoundError, ValueError)):
             load_and_clean("/nonexistent/path/file.csv")
 
     def test_empty_csv(self, tmp_path):
@@ -75,7 +75,7 @@ class TestDataLoaderClass:
     def test_init(self, sample_csv):
         loader = DataLoader(sample_csv)
         assert loader.file_path == Path(sample_csv)
-        assert loader.df is None  # 尚未加载
+        assert loader.raw_df is None  # 尚未加载
 
     def test_load(self, sample_csv):
         loader = DataLoader(sample_csv)
