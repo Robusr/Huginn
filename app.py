@@ -129,7 +129,7 @@ def main():
             st.info("👆 请先上传一个数据文件")
 
         st.divider()
-        st.caption("Built with ☕️ by Robusr👨🏻‍💻 | 2026 © All rights reserved")
+        st.caption("Built with ☕️ by Robusr👨🏻‍💻")
         st.caption(f"v1.0 | {datetime.now().year}")
 
     # ── 主区域 ────────────────────────────────────────────────
