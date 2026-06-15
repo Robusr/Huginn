@@ -17,13 +17,15 @@
 """
 
 import json
-import logging
 import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
-logger = logging.getLogger(__name__)
+from config import Config
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class ReportGenerator:
@@ -41,12 +43,7 @@ class ReportGenerator:
     ]
 
     # 图表中文描述映射
-    CHART_LABELS = {
-        "bar_chart": "柱状图：分类频数与分组均值对比",
-        "box_plot": "箱线图：数值分布特征与离群值检测",
-        "scatter_plot": "散点图：两变量关系形态与回归趋势",
-        "correlation_heatmap": "相关性热力图：多变量相关结构概览",
-    }
+    CHART_LABELS = Config.CHART_LABELS
 
     def __init__(
         self,

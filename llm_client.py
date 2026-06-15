@@ -19,6 +19,11 @@ from dotenv import load_dotenv
 from openai import OpenAI, APIError, RateLimitError, APITimeoutError
 from pydantic import BaseModel, Field
 
+from config import Config
+from logger import get_logger
+
+logger = get_logger(__name__)
+
 # 加载环境变量
 load_dotenv()
 
@@ -69,11 +74,11 @@ class LLMClient:
         if not offline_mode:
             self.client = OpenAI(
                 api_key=os.getenv("DEEPSEEK_API_KEY"),
-                base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
+                base_url=os.getenv("DEEPSEEK_BASE_URL", Config.LLM_BASE_URL),
             )
-            self.model = os.getenv("LLM_MODEL", "deepseek-chat")
-            self.max_retries = 3
-            self.retry_delay = 3  # DeepSeek免费用户速率限制较严格
+            self.model = Config.LLM_MODEL
+            self.max_retries = Config.LLM_MAX_RETRIES
+            self.retry_delay = Config.LLM_RETRY_DELAY
 
     def _call_with_retry(self, messages: List[Dict], response_format: Optional[BaseModel] = None) -> Any:
         """带重试机制的API调用，处理速率限制和超时"""
@@ -85,9 +90,9 @@ class LLMClient:
                 kwargs = {
                     "model": self.model,
                     "messages": messages,
-                    "temperature": 0.05,  # 极低温度保证结果稳定、无幻觉
-                    "top_p": 0.95,
-                    "max_tokens": 4096
+                    "temperature": Config.LLM_TEMPERATURE,
+                    "top_p": Config.LLM_TOP_P,
+                    "max_tokens": Config.LLM_MAX_TOKENS,
                 }
                 if response_format:
                     kwargs["response_format"] = response_format
@@ -96,7 +101,7 @@ class LLMClient:
                 if attempt == self.max_retries - 1:
                     raise Exception("DeepSeek API 速率限制超限，请等待1分钟后重试")
                 wait_time = self.retry_delay * (attempt + 1)
-                print(f"⚠️  速率限制触发，等待 {wait_time} 秒后重试...")
+                logger.warning("速率限制触发，等待 %d 秒后重试...", wait_time)
                 time.sleep(wait_time)
             except APITimeoutError:
                 if attempt == self.max_retries - 1:
@@ -187,7 +192,7 @@ class LLMClient:
     # ------------------------------
     def _load_offline_questions(self) -> List[CandidateQuestion]:
         """加载预生成的候选问题（离线演示用）"""
-        print("⚠️  离线模式：加载预生成的候选问题")
+        logger.info("离线模式：加载预生成的候选问题")
         return [
             CandidateQuestion(
                 question="不同专业的学生对课程整体满意度是否存在显著差异？",
@@ -205,7 +210,7 @@ class LLMClient:
 
     def _load_offline_findings_suggestions(self) -> tuple[List[DataFinding], List[CourseSuggestion]]:
         """加载预生成的发现和建议（离线演示用）"""
-        print("⚠️  离线模式：加载预生成的发现和建议")
+        logger.info("离线模式：加载预生成的发现和建议")
         findings = [
             DataFinding(
                 conclusion="计算机专业学生的整体满意度显著低于其他专业",

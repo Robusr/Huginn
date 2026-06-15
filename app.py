@@ -3,27 +3,30 @@
 @File    : app.py
 @Author  : Huginn
 @Date    : 2026/6/16
-@Description: Streamlit 交互式界面 — 课程问卷分析智能体 Huginn v1.0
+@Description: Streamlit 交互式界面 — 课程问卷分析智能体
+              功能：文件上传 → 分析执行 → 结果展示 → 报告下载
+              用法：streamlit run app.py
 @Software: PyCharm
-"""
-
-"""
-Streamlit 交互式展示界面
-功能：文件上传 → 分析执行 → 结果展示 → 报告下载
-用法：streamlit run app.py
 """
 
 import sys
 import json
 import tempfile
+import zipfile
+import io
 from pathlib import Path
 from datetime import datetime
 
 import streamlit as st
 
+from config import Config
+from logger import get_logger
+
+logger = get_logger(__name__)
+
 # 页面配置
 st.set_page_config(
-    page_title="Huginn - 课程问卷分析智能体",
+    page_title=Config.APP_PAGE_TITLE,
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -88,7 +91,7 @@ def load_run_results(run_dir: Path) -> dict:
 # ==================================================================
 
 def main():
-    st.title("📊 课程问卷分析智能体 Huginn v1.0")
+    st.title(f"📊 课程问卷分析智能体 Huginn {Config.APP_VERSION}")
     st.markdown("> **全自动数据分析**：上传 Excel/CSV 表格，自动完成统计分析和报告生成")
 
     # ── 侧边栏 ────────────────────────────────────────────────
@@ -103,7 +106,7 @@ def main():
 
         user_requirement = st.text_area(
             "📝 分析需求",
-            value="为下一次上课的老师生成课程建议报告",
+            value=Config.DEFAULT_REQUIREMENT,
             help="描述你希望智能体关注的分析重点",
         )
 
@@ -151,7 +154,7 @@ def main():
                 run_dir = run_agent(
                     tmp_path,
                     user_requirement,
-                    output_dir="./outputs",
+                    output_dir=Config.OUTPUT_DIR,
                     offline_mode=offline_mode,
                 )
 
@@ -206,13 +209,7 @@ def main():
 
                 st.subheader("字段类型分布")
                 type_counts = overview.get("field_type_counts", {})
-                type_labels = {
-                    "numeric_continuous": "连续数值",
-                    "numeric_discrete": "离散数值",
-                    "categorical": "分类",
-                    "datetime": "日期时间",
-                    "text": "文本",
-                }
+                type_labels = Config.TYPE_LABELS
                 cols = st.columns(len(type_counts) if type_counts else 1)
                 for i, (ftype, count) in enumerate(sorted(type_counts.items())):
                     cols[i % len(cols)].metric(
@@ -237,12 +234,7 @@ def main():
         with tabs[1]:
             charts = results.get("charts", [])
             if charts:
-                chart_labels = {
-                    "bar_chart": "柱状图：分类频数与分组均值",
-                    "box_plot": "箱线图：数值分布与离群值",
-                    "scatter_plot": "散点图：两变量关系",
-                    "correlation_heatmap": "相关性热力图",
-                }
+                chart_labels = Config.CHART_LABELS
                 cols = st.columns(2)
                 for i, chart_path in enumerate(charts):
                     desc = chart_labels.get(chart_path.stem, chart_path.stem)
@@ -279,7 +271,7 @@ def main():
                 for name, test in ht.items():
                     if isinstance(test, dict) and "p_value" in test:
                         p = test.get("p_value", 1.0)
-                        if isinstance(p, (int, float)) and p < 0.05:
+                        if isinstance(p, (int, float)) and p < Config.SIGNIFICANCE_THRESHOLD:
                             sig_tests.append({
                                 "检验": test.get("method", name),
                                 "变量": test.get("variables", test.get("column", "")),
@@ -297,7 +289,7 @@ def main():
                 for name, test in anova.items():
                     if isinstance(test, dict) and "p_value" in test:
                         p = test.get("p_value", 1.0)
-                        if isinstance(p, (int, float)) and p < 0.05:
+                        if isinstance(p, (int, float)) and p < Config.SIGNIFICANCE_THRESHOLD:
                             sig_anova.append({
                                 "因变量": test.get("dependent"),
                                 "因子": test.get("factor"),
@@ -363,13 +355,7 @@ def main():
 
                 st.subheader("各模块得分")
                 checks = val.get("checks", {})
-                module_names = {
-                    "statistical_quantity": "统计数量硬指标 (40分)",
-                    "statistical_validity": "统计结果有效性 (20分)",
-                    "findings_compliance": "数据发现合规性 (20分)",
-                    "suggestions_reasonableness": "课程建议合理性 (10分)",
-                    "report_completeness": "报告完整性 (10分)",
-                }
+                module_names = Config.MODULE_NAMES
                 for key, check in checks.items():
                     check_score = check.get("score", 0)
                     check_pass = check.get("pass", False)
@@ -439,13 +425,18 @@ def main():
 
         # 打包下载
         with col4:
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+                for fpath in sorted(run_dir.rglob("*")):
+                    if fpath.is_file():
+                        zf.write(fpath, fpath.relative_to(run_dir))
+            zip_buffer.seek(0)
             st.download_button(
-                "💾 下载完整报告 (全部)",
-                data="请分别下载上述文件",
-                file_name="README.txt",
-                mime="text/plain",
+                "💾 下载完整报告 (ZIP)",
+                data=zip_buffer,
+                file_name=f"{run_dir.name}.zip",
+                mime="application/zip",
                 use_container_width=True,
-                disabled=True,
             )
 
 

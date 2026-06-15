@@ -23,28 +23,21 @@ import re
 from pathlib import Path
 from typing import Dict, List, Tuple, Any
 
+from config import Config
+from logger import get_logger
+
+logger = get_logger(__name__)
+
+
 class ReportValidator:
-    # 课程作业硬性要求
-    REQUIREMENTS = {
-        "point_estimation_min": 5,
-        "interval_estimation_min": 5,
-        "hypothesis_test_min": 5,
-        "anova_min": 2,
-        "chi_square_min": 2,
-        "significant_p_threshold": 0.05
-    }
+    # 课程作业硬性要求（从 Config 读取）
+    REQUIREMENTS = Config.REQUIREMENTS
 
     # 禁止使用的因果词汇
-    CAUSAL_WORDS = [
-        "导致", "造成", "使得", "影响", "决定", "引起", "促成",
-        "因为", "所以", "因此", "故而", "由此可见", "综上所述"
-    ]
+    CAUSAL_WORDS = Config.CAUSAL_WORDS
 
     # 禁止使用的模糊词汇
-    VAGUE_WORDS = [
-        "可能", "大概", "也许", "或许", "差不多", "基本上",
-        "感觉", "认为", "觉得", "应该", "想必", "看样子"
-    ]
+    VAGUE_WORDS = Config.VAGUE_WORDS
 
     def __init__(self, run_dir: str):
         """

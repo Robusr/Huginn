@@ -14,6 +14,10 @@
 import json
 from typing import Any, Dict, List
 from llm_client import CandidateQuestion
+from config import Config
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class TaskPlanner:
@@ -74,15 +78,15 @@ class TaskPlanner:
                 print(f"   - {reason}")
 
         # 5. 按优先级排序（ANOVA > 卡方 > t检验 > 其他）
-        priority = {"ANOVA": 3, "卡方检验": 2, "t检验": 2, "配对t检验": 1, "相关性分析": 1, "分布检验": 1}
+        priority = Config.TASK_PRIORITY
         valid_tasks.sort(key=lambda x: priority[x["method"]], reverse=True)
 
         # 6. 自动补充默认任务，保证满足统计数量要求
-        if len(valid_tasks) < 5:
+        if len(valid_tasks) < Config.TASK_MIN_COUNT:
             print(f"\n⚠️  仅筛选出{len(valid_tasks)}个有效任务，自动补充默认任务...")
             default_tasks = self._generate_default_tasks()
             valid_tasks.extend(default_tasks)
-            valid_tasks = valid_tasks[:10]  # 最多执行10个任务，避免超时
+            valid_tasks = valid_tasks[:Config.TASK_MAX_COUNT]  # 最多执行N个任务，避免超时
 
         # 7. 最终校验：确保至少包含2个ANOVA、2个卡方、3个t检验
         valid_tasks = self._ensure_minimum_requirements(valid_tasks)
@@ -233,8 +237,8 @@ class TaskPlanner:
         chi_count = sum(1 for t in tasks if t["method"] == "卡方检验")
         t_count = sum(1 for t in tasks if t["method"] in ["t检验", "配对t检验"])
 
-        # 补充ANOVA到2个
-        while anova_count < 2:
+        # 补充ANOVA到最低要求
+        while anova_count < Config.TASK_MIN_REQUIREMENTS["ANOVA"]:
             multi_cats = [c for c in self.column_info
                           if self.column_info[c]["inferred_type"] == "categorical"
                           and self.column_info[c]["unique"] >= 3]
@@ -252,8 +256,8 @@ class TaskPlanner:
             else:
                 break
 
-        # 补充卡方到2个
-        while chi_count < 2:
+        # 补充卡方到最低要求
+        while chi_count < Config.TASK_MIN_REQUIREMENTS["chi_square"]:
             categorical_cols = [c for c in self.column_info
                                 if self.column_info[c]["inferred_type"] == "categorical"]
             if len(categorical_cols) >= 3:
@@ -268,8 +272,8 @@ class TaskPlanner:
             else:
                 break
 
-        # 补充t检验到3个
-        while t_count < 3:
+        # 补充t检验到最低要求
+        while t_count < Config.TASK_MIN_REQUIREMENTS["t_test"]:
             binary_cats = [c for c in self.column_info
                            if self.column_info[c]["inferred_type"] == "categorical"
                            and self.column_info[c]["unique"] == 2]

@@ -22,6 +22,7 @@ from data_loader import load_and_clean
 from data_profiler import generate_profile
 from analysis_engine import AnalysisEngine
 from chart_generator import generate_charts
+from config import Config
 from llm_client import LLMClient
 from task_planner import TaskPlanner
 
@@ -169,13 +170,7 @@ def run_agent(
         print(f"       整体结果: {'Done 通过' if passed else 'Error 不通过'}")
 
         # 打印各模块得分
-        module_map = {
-            "statistical_quantity": "统计数量硬指标",
-            "statistical_validity": "统计结果有效性",
-            "findings_compliance": "数据发现合规性",
-            "suggestions_reasonableness": "课程建议合理性",
-            "report_completeness": "报告完整性",
-        }
+        module_map = Config.MODULE_NAMES
         for check_name, check_data in val_result["checks"].items():
             status = "Done" if check_data["pass"] else "Error"
             label = module_map.get(check_name, check_name)

@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import os
 from datetime import datetime
 from pathlib import Path
@@ -17,12 +16,15 @@ import numpy as np
 import pandas as pd
 from scipy import stats as scipy_stats
 
-logger = logging.getLogger(__name__)
+from config import Config
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 # 类型推断阈值
-_UNIQUE_RATIO_THRESHOLD = 0.05       # 唯一值占比 < 5% 且唯一数 <= 50 → 分类
-_MAX_CATEGORY_CARDINALITY = 50        # 分类变量最大基数
-_MIN_NUMERIC_UNIQUE = 10              # 至少 10 个唯一值才视为连续
+_UNIQUE_RATIO_THRESHOLD = Config.UNIQUE_RATIO_THRESHOLD
+_MAX_CATEGORY_CARDINALITY = Config.MAX_CATEGORY_CARDINALITY
+_MIN_NUMERIC_UNIQUE = Config.MIN_NUMERIC_UNIQUE
 
 
 class DataProfiler:
