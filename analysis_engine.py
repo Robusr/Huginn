@@ -26,6 +26,16 @@ logger = get_logger(__name__)
 class AnalysisEngine:
     """统计推断引擎：点估计 + 区间估计 + 假设检验 + ANOVA + 分布检验 + 卡方拟合优度。"""
 
+    # 任务驱动模式方法调度表
+    _METHOD_DISPATCH: dict = {
+        "t检验": "_execute_t_test",
+        "配对t检验": "_execute_paired_t_test",
+        "ANOVA": "_execute_anova",
+        "卡方检验": "_execute_chi_square",
+        "相关性分析": "_execute_correlation",
+        "分布检验": "_execute_distribution_test",
+    }
+
     def __init__(
         self,
         df: pd.DataFrame,
