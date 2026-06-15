@@ -23,8 +23,11 @@ from data_profiler import generate_profile
 from analysis_engine import AnalysisEngine
 from chart_generator import generate_charts
 from config import Config
+from logger import get_logger
 from llm_client import LLMClient
 from task_planner import TaskPlanner
+
+logger = get_logger(__name__)
 
 
 def run_agent(
@@ -152,7 +155,15 @@ def run_agent(
         report_path = report_gen.save("final_report.md")
         print(f"       报告已生成: {report_path.name}")
         print(f"       章节: 7章 + 附录（合规性验证）")
+    except FileNotFoundError as e:
+        logger.warning("报告所需文件缺失: %s", e)
+        print(f"       Warn: 报告所需文件缺失: {e}")
+        print(f"       提示: 可稍后手动运行 python report_generator.py {run_dir}")
+    except ImportError as e:
+        logger.warning("缺少报告生成依赖: %s", e)
+        print(f"       Warn: 缺少报告生成依赖: {e}")
     except Exception as e:
+        logger.error("报告生成失败", exc_info=True)
         print(f"       Warn: 报告生成失败: {e}")
         print(f"       提示: 可稍后手动运行 python report_generator.py {run_dir}")
 
@@ -183,9 +194,14 @@ def run_agent(
             for sug in suggestions[:3]:
                 print(f"         {sug}")
     except FileNotFoundError as e:
+        logger.warning("验证所需文件缺失: %s", e)
         print(f"       Warn: 验证所需文件缺失: {e}")
         print(f"       提示: 可稍后手动运行 python report_validator.py {run_dir}")
+    except ImportError as e:
+        logger.warning("缺少验证依赖: %s", e)
+        print(f"       Warn: 缺少验证依赖: {e}")
     except Exception as e:
+        logger.error("验证失败", exc_info=True)
         print(f"       Warn: 验证失败: {e}")
         print(f"       提示: 可稍后手动运行 python report_validator.py {run_dir}")
 
@@ -220,5 +236,6 @@ if __name__ == "__main__":
     try:
         run_agent(args.file_path, args.requirement, offline_mode=args.offline)
     except Exception as e:
+        logger.critical("智能体管线运行失败", exc_info=True)
         print(f"\nError 运行失败: {str(e)}")
         sys.exit(1)

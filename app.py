@@ -167,7 +167,10 @@ def main():
                 st.session_state.results = results
                 st.session_state.analysis_done = True
 
+            except FileNotFoundError as e:
+                st.error(f"❌ 文件未找到: {str(e)}")
             except Exception as e:
+                logger.error("Streamlit 分析流程失败", exc_info=True)
                 st.error(f"❌ 分析失败: {str(e)}")
                 import traceback
                 with st.expander("🔍 错误详情"):

@@ -7,14 +7,15 @@
 from __future__ import annotations
 
 import re
-import logging
 from pathlib import Path
 from typing import Optional, Union
 
 import pandas as pd
 import numpy as np
 
-logger = logging.getLogger(__name__)
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class DataLoader:
@@ -298,7 +299,6 @@ def load_and_clean(
 
 # ------------------------------------------------------------------
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.DEBUG, format="%(levelname)s: %(message)s")
     import sys
 
     if len(sys.argv) < 2:

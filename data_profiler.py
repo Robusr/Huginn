@@ -306,7 +306,6 @@ def generate_profile(
 
 # ------------------------------------------------------------------
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     import sys
 
     if len(sys.argv) < 2:

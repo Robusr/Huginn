@@ -6,13 +6,16 @@
 
 from __future__ import annotations
 
-import logging
 import os
 from pathlib import Path
 from typing import Any, Optional, Union
 
 import numpy as np
 import pandas as pd
+
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 # =========================================================================
 # 必须第一步：导入 matplotlib 并立即设置中文字体
@@ -106,8 +109,6 @@ sns.set_context("notebook", font_scale=1.1)
 
 # seaborn 会覆盖 rcParams，必须在 seaborn 之后再次设置字体
 _install_chinese_font()
-
-logger = logging.getLogger(__name__)
 
 
 class ChartGenerator:
@@ -347,7 +348,6 @@ def generate_charts(
 
 # ------------------------------------------------------------------
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     import sys
     if len(sys.argv) < 2:
         print("用法：python chart_generator.py <file_path>")

@@ -8,13 +8,14 @@
 from __future__ import annotations
 
 import json
-import logging
 import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional, Union
 
-logger = logging.getLogger(__name__)
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class InsightGenerator:
@@ -473,7 +474,6 @@ def generate_insights(
 
 # ------------------------------------------------------------------
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     import sys
 
     if len(sys.argv) < 2:

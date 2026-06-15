@@ -71,11 +71,11 @@ class TaskPlanner:
             }
             valid_tasks.append(task)
 
-        # 打印无效问题原因（便于调试）
+        # 记录无效问题原因（便于调试）
         if invalid_reasons:
-            print("\n⚠️  以下问题被过滤：")
+            logger.warning("以下候选问题被过滤：")
             for reason in invalid_reasons:
-                print(f"   - {reason}")
+                logger.warning("  - %s", reason)
 
         # 5. 按优先级排序（ANOVA > 卡方 > t检验 > 其他）
         priority = Config.TASK_PRIORITY
@@ -83,7 +83,7 @@ class TaskPlanner:
 
         # 6. 自动补充默认任务，保证满足统计数量要求
         if len(valid_tasks) < Config.TASK_MIN_COUNT:
-            print(f"\n⚠️  仅筛选出{len(valid_tasks)}个有效任务，自动补充默认任务...")
+            logger.info("仅筛选出 %d 个有效任务，自动补充默认任务...", len(valid_tasks))
             default_tasks = self._generate_default_tasks()
             valid_tasks.extend(default_tasks)
             valid_tasks = valid_tasks[:Config.TASK_MAX_COUNT]  # 最多执行N个任务，避免超时
@@ -91,7 +91,7 @@ class TaskPlanner:
         # 7. 最终校验：确保至少包含2个ANOVA、2个卡方、3个t检验
         valid_tasks = self._ensure_minimum_requirements(valid_tasks)
 
-        print(f"\n✅  最终可执行任务：{len(valid_tasks)}个")
+        logger.info("最终可执行任务：%d 个", len(valid_tasks))
         return valid_tasks
 
     # ------------------------------
