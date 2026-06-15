@@ -63,7 +63,6 @@ stat_agent/
 ### 步骤 1：运行全流程 Python 脚本
 
 ```bash
-cd C:\Users\NBLYX\Desktop\stat_agent
 python main.py "<用户提供的文件路径>"
 ```
 

@@ -12,7 +12,7 @@
 
 ## 关键路径
 
-- 脚本目录：`C:\Users\NBLYX\Desktop\stat_agent\`
+- 脚本目录：项目根目录（当前工作目录）
 - 入口脚本：`main.py`（一键运行 data_loader → profiler → analysis → charts）
 - 输出目录：`outputs/<timestamp_filename>/`
   - `data_profile.json` — 字段画像

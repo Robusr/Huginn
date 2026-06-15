@@ -18,7 +18,7 @@ alwaysApply: false
 ## 工作流
 用户提供数据文件时，执行：
 
-1. `cd C:\Users\NBLYX\Desktop\stat_agent && python main.py "<文件路径>"`
+1. `python main.py "<文件路径>"`
    → 记录 outputs/<run_dir> 路径
 
 2. 读取 outputs/<run_dir>/data_profile.json 理解数据结构

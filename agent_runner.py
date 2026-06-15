@@ -10,7 +10,7 @@
 # agent_runner.py
 """
 智能体主流程控制器
-功能：串联所有模块，实现从文件输入到报告输出的完整自动化流程
+功能：串联所有模块，实现从文件输入到完整报告输出的全自动9步流程
 用法：python agent_runner.py <数据文件路径> <分析需求> [--offline]
 """
 import sys
@@ -62,14 +62,14 @@ def run_agent(
     # ------------------------------
     # 步骤1：数据加载与清洗
     # ------------------------------
-    print("\n[1/7]  数据读取与预处理...")
+    print("\n[1/9]  数据读取与预处理...")
     df = load_and_clean(str(fp))
     print(f"       清洗后: {df.shape[0]} 行 × {df.shape[1]} 列")
 
     # ------------------------------
     # 步骤2：生成数据画像
     # ------------------------------
-    print("\n[2/7]  生成数据画像...")
+    print("\n[2/9]  生成数据画像...")
     data_profile = generate_profile(df, output_dir=str(run_dir))
     print(f"       总缺失率: {data_profile['meta']['total_missing_pct']}%")
     print(f"       字段类型分布: {data_profile['overview']['field_type_counts']}")
@@ -77,7 +77,7 @@ def run_agent(
     # ------------------------------
     # 步骤3：LLM生成候选分析问题
     # ------------------------------
-    print("\n[3/7]  生成候选分析问题...")
+    print("\n[3/9]  生成候选分析问题...")
     llm_client = LLMClient(offline_mode=offline_mode)
     candidate_questions = llm_client.generate_candidate_questions(data_profile, user_requirement)
     print(f"       生成候选问题: {len(candidate_questions)} 个")
@@ -85,7 +85,7 @@ def run_agent(
     # ------------------------------
     # 步骤4：筛选可执行任务
     # ------------------------------
-    print("\n[4/7]  筛选可执行任务...")
+    print("\n[4/9]  筛选可执行任务...")
     task_planner = TaskPlanner(data_profile)
     valid_tasks = task_planner.filter_and_convert_tasks(candidate_questions)
 
@@ -100,7 +100,7 @@ def run_agent(
     # ------------------------------
     # 步骤5：执行统计分析
     # ------------------------------
-    print("\n[5/7]  执行统计分析...")
+    print("\n[5/9]  执行统计分析...")
     engine = AnalysisEngine(df, output_dir=str(run_dir))
     stats_results = engine.run_tasks(valid_tasks)
     cc = stats_results.get("counts_check", {})
@@ -118,7 +118,7 @@ def run_agent(
     # ------------------------------
     # 步骤6：生成可视化图表
     # ------------------------------
-    print("\n[6/7]  生成可视化图表...")
+    print("\n[6/9]  生成可视化图表...")
     charts = generate_charts(df, output_dir=str(chart_dir))
     for p in charts:
         print(f"       {Path(p).name}")
@@ -128,7 +128,7 @@ def run_agent(
     # ------------------------------
     # 步骤7：生成数据发现和课程建议
     # ------------------------------
-    print("\n[7/7]  生成数据发现和课程建议...")
+    print("\n[7/9]  生成数据发现和课程建议...")
     findings, suggestions = llm_client.generate_findings_and_suggestions(
         stats_results, data_profile, valid_tasks
     )
@@ -137,9 +137,62 @@ def run_agent(
 
     # 保存发现和建议
     with open(run_dir / "findings.json", "w", encoding="utf-8") as f:
-        json.dump([f.dict() for f in findings], f, ensure_ascii=False, indent=2)
+        json.dump([f.model_dump() for f in findings], f, ensure_ascii=False, indent=2)
     with open(run_dir / "suggestions.json", "w", encoding="utf-8") as f:
-        json.dump([s.dict() for s in suggestions], f, ensure_ascii=False, indent=2)
+        json.dump([s.model_dump() for s in suggestions], f, ensure_ascii=False, indent=2)
+
+    # ------------------------------
+    # 步骤8：生成完整分析报告
+    # ------------------------------
+    print("\n[8/9]  生成完整课程分析报告...")
+    try:
+        from report_generator import ReportGenerator
+        report_gen = ReportGenerator(run_dir, user_requirement)
+        report_path = report_gen.save("final_report.md")
+        print(f"       报告已生成: {report_path.name}")
+        print(f"       章节: 7章 + 附录（合规性验证）")
+    except Exception as e:
+        print(f"       Warn: 报告生成失败: {e}")
+        print(f"       提示: 可稍后手动运行 python report_generator.py {run_dir}")
+
+    # ------------------------------
+    # 步骤9：合规性验证
+    # ------------------------------
+    print("\n[9/9]  运行合规性验证...")
+    try:
+        from report_validator import ReportValidator
+        validator = ReportValidator(str(run_dir))
+        val_result = validator.run_all_checks()
+        score = val_result["meta"]["score"]
+        passed = val_result["meta"]["overall_pass"]
+        print(f"       验证得分: {score}/100")
+        print(f"       整体结果: {'Done 通过' if passed else 'Error 不通过'}")
+
+        # 打印各模块得分
+        module_map = {
+            "statistical_quantity": "统计数量硬指标",
+            "statistical_validity": "统计结果有效性",
+            "findings_compliance": "数据发现合规性",
+            "suggestions_reasonableness": "课程建议合理性",
+            "report_completeness": "报告完整性",
+        }
+        for check_name, check_data in val_result["checks"].items():
+            status = "Done" if check_data["pass"] else "Error"
+            label = module_map.get(check_name, check_name)
+            print(f"         {status} {label}: {check_data['score']}分")
+
+        # 打印改进建议
+        suggestions = val_result.get("improvement_suggestions", [])
+        if suggestions and not passed:
+            print(f"\n       改进建议:")
+            for sug in suggestions[:3]:
+                print(f"         {sug}")
+    except FileNotFoundError as e:
+        print(f"       Warn: 验证所需文件缺失: {e}")
+        print(f"       提示: 可稍后手动运行 python report_validator.py {run_dir}")
+    except Exception as e:
+        print(f"       Warn: 验证失败: {e}")
+        print(f"       提示: 可稍后手动运行 python report_validator.py {run_dir}")
 
     # ------------------------------
     # 完成
@@ -148,12 +201,15 @@ def run_agent(
     print(f"   智能体分析完成！")
     print(f"   所有结果已保存到: {run_dir.resolve()}")
     print(f"   产物清单:")
-    print(f"     - data_profile.json    数据画像")
-    print(f"     - stats_results.json   统计结果")
-    print(f"     - valid_tasks.json     执行任务")
-    print(f"     - findings.json        数据发现")
-    print(f"     - suggestions.json     课程建议")
-    print(f"     - charts/              可视化图表")
+    print(f"     - data_profile.json       数据画像")
+    print(f"     - stats_results.json      统计结果")
+    print(f"     - valid_tasks.json        执行任务")
+    print(f"     - findings.json           数据发现")
+    print(f"     - suggestions.json        课程建议")
+    print(f"     - charts/                 可视化图表")
+    print(f"     - final_report.md         完整课程分析报告")
+    print(f"     - validation_result.json  合规性验证结果")
+    print(f"     - validation_report.md    合规性验证报告")
     print("=" * 70)
 
     return run_dir

@@ -9,7 +9,7 @@
 
 【执行步骤】
 第 1 步：运行下面这行命令（把 <文件路径> 替换成实际路径）：
-cd C:\Users\NBLYX\Desktop\stat_agent && python main.py "<文件路径>"
+python main.py "<文件路径>"
 
 第 2 步：读取 outputs/<运行目录>/data_profile.json，理解数据的结构、字段类型、缺失情况和基本统计量。
 

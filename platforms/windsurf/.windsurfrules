@@ -25,4 +25,4 @@ analyze(data_file):
 ```
 
 ## 脚本位置
-`C:\Users\NBLYX\Desktop\stat_agent\`
+项目根目录（当前工作目录）
