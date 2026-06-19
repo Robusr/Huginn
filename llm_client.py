@@ -184,7 +184,7 @@ class LLMClient:
         :return: (数据发现列表, 课程建议列表)
         """
         if self.offline_mode:
-            return self._load_offline_findings_suggestions()
+            return self._load_offline_findings_suggestions(stats_results)
 
         # 预扫描：统计显著结果数量，帮助LLM判断数据质量
         sig_count = self._count_significant_results(stats_results)
@@ -285,35 +285,145 @@ class LLMClient:
         logger.info("离线模式：加载预生成的候选问题")
         return [
             CandidateQuestion(
-                question="不同专业的学生对课程整体满意度是否存在显著差异？",
-                variables=["整体满意度", "专业"],
-                method="ANOVA",
-                value="了解不同专业学生的满意度差异，便于针对性调整教学内容"
+                question="不同性别的学生在课程学习时间投入上是否存在显著差异？",
+                variables=["性别", "每周学习时间"],
+                method="t检验",
+                value="了解不同性别学生的学习时间分配差异，便于针对性辅导"
             ),
             CandidateQuestion(
-                question="是否及格的学生在模块3难度评分上是否存在显著差异？",
-                variables=["模块3难度", "是否及格"],
-                method="t检验",
-                value="识别影响学生及格率的关键难点模块"
-            )
+                question="不同编程能力自评的学生在人形机器人兴趣程度上是否存在显著差异？",
+                variables=["编程能力自评", "人形机器人兴趣"],
+                method="ANOVA",
+                value="探索编程能力与学生兴趣的关系，为课程设计提供参考"
+            ),
         ]
 
-    def _load_offline_findings_suggestions(self) -> tuple[List[DataFinding], List[CourseSuggestion]]:
-        """加载预生成的发现和建议（离线演示用）"""
-        logger.info("离线模式：加载预生成的发现和建议")
-        findings = [
-            DataFinding(
-                conclusion="计算机专业学生的整体满意度显著低于其他专业",
-                evidence="F=5.67, p=0.004",
-                method="单因素方差分析",
-                importance=5
-            )
+    def _load_offline_findings_suggestions(self, stats_results: Dict) -> tuple[List[DataFinding], List[CourseSuggestion]]:
+        """动态生成离线发现和建议（基于 stats_results 自动提取显著结果）。"""
+        logger.info("离线模式：基于统计结果自动生成发现和建议")
+        findings, suggestions = self._generate_offline_findings_suggestions(stats_results)
+        return findings, suggestions
+
+    def _generate_offline_findings_suggestions(self, stats_results: Dict) -> tuple[List[DataFinding], List[CourseSuggestion]]:
+        """从 stats_results 中自动提取显著结果，生成发现和建议。"""
+        from config import clean_field_name
+
+        significance_threshold = 0.05
+        findings: List[DataFinding] = []
+        suggestions: List[CourseSuggestion] = []
+
+        # 1. 扫描 ANOVA 显著结果
+        anova = stats_results.get("anova", {}).get("tests", {})
+        for name, test in anova.items():
+            if not isinstance(test, dict) or "error" in str(test):
+                continue
+            p = test.get("p_value")
+            if isinstance(p, (int, float)) and p < significance_threshold:
+                factor = clean_field_name(str(test.get("factor", "不同群体")))
+                dep = clean_field_name(str(test.get("dependent", "指标")))
+                findings.append(DataFinding(
+                    conclusion=f"不同{factor}的学生在{dep}上存在显著差异",
+                    evidence=f"单因素方差分析：F={test.get('F_statistic', 0):.2f}, p={p:.4f}",
+                    method="单因素方差分析（ANOVA）",
+                    importance=5 if p < 0.01 else 4,
+                ))
+
+        # 2. 扫描假设检验显著结果
+        ht = stats_results.get("hypothesis_tests", {}).get("tests", {})
+        for name, test in ht.items():
+            if not isinstance(test, dict) or "error" in str(test):
+                continue
+            p = test.get("p_value")
+            if isinstance(p, (int, float)) and p < significance_threshold:
+                var_info = test.get("variables", test.get("column", "相关指标"))
+                var_display = clean_field_name(str(var_info)) if isinstance(var_info, str) else str(var_info)
+                stat_val = test.get('t_statistic') or test.get('statistic')
+                stat_str = f"{stat_val:.2f}" if isinstance(stat_val, (int, float)) else "?"
+                findings.append(DataFinding(
+                    conclusion=f"在{var_display}上检测到统计显著的组间差异",
+                    evidence=f"{test.get('method', '假设检验')}：统计量={stat_str}, p={p:.4f}",
+                    method=test.get("method", "假设检验"),
+                    importance=4 if p < 0.01 else 3,
+                ))
+
+        # 3. 扫描卡方拟合优度显著结果
+        chi = stats_results.get("chi_square_goodness_of_fit", {}).get("tests", {})
+        for name, test in chi.items():
+            if not isinstance(test, dict) or "error" in str(test):
+                continue
+            p = test.get("p_value")
+            if isinstance(p, (int, float)) and p < significance_threshold:
+                col_display = clean_field_name(str(test.get("column", "分类变量")))
+                findings.append(DataFinding(
+                    conclusion=f"{col_display}的各类别分布不均衡，存在统计显著的偏差",
+                    evidence=f"卡方拟合优度检验：χ²={test.get('chi2_statistic', 0):.2f}, p={p:.4f}, df={test.get('df', '?')}",
+                    method="皮尔逊卡方拟合优度检验",
+                    importance=3,
+                ))
+
+        # 4. 补充描述性发现以达到至少 5 条
+        if len(findings) < 5:
+            pe = stats_results.get("point_estimation", {}).get("fields", {})
+            added = 0
+            for col, info in pe.items():
+                if len(findings) >= 8:
+                    break
+                if not isinstance(info, dict) or "error" in info:
+                    continue
+                mean_val = info.get("mean")
+                std_val = info.get("std")
+                cv_pct = info.get("cv_pct")
+                n_val = info.get("n")
+                if mean_val is not None and std_val is not None and cv_pct is not None:
+                    col_display = clean_field_name(str(col))
+                    cv_desc = "低" if cv_pct < 20 else ("中等" if cv_pct < 50 else "高")
+                    findings.append(DataFinding(
+                        conclusion=f"{col_display}的平均值为{mean_val:.2f}（标准差={std_val:.2f}），学生间差异程度为{cv_desc}（CV={cv_pct:.1f}%）",
+                        evidence=f"基于{n_val}个有效样本的描述性统计：均值={mean_val:.2f}, 标准差={std_val:.2f}, 变异系数={cv_pct:.1f}%",
+                        method="描述性统计",
+                        importance=2 if cv_pct > 30 else 1,
+                    ))
+                    added += 1
+                    if added >= 5:
+                        break
+
+        # 5. 按重要性排序
+        findings.sort(key=lambda x: x.importance, reverse=True)
+        findings = findings[:8]
+
+        # 6. 基于发现生成具体可落地的建议
+        suggestion_templates = [
+            {
+                "title": "针对学生差异实施分层教学，为不同基础的学生提供差异化学习路径",
+                "direction": "根据学情数据将学生分为基础层、提升层和拓展层，分别设计不同的课堂任务和课后练习。预期可提高15%的课堂参与度和10%的学习满意度。",
+            },
+            {
+                "title": "优化课程作业的提交节奏，设置阶段性检查点以分散学生的学习压力",
+                "direction": "将大作业拆分为3-4个阶段性子任务，每阶段设置明确的提交节点，预期可减少期末集中赶工现象30%。",
+            },
+            {
+                "title": "增加课堂互动和实践环节的比例，提升学生的动手能力和学习兴趣",
+                "direction": "将每节课的后20分钟设为互动实践时段，安排小组讨论、案例分析或动手操作，预期可将课堂专注度提升20%。",
+            },
+            {
+                "title": "建立学习预警和早期干预机制，对学习困难学生提供及时帮助",
+                "direction": "在第4周和第8周进行学习进度检查，对评分低于平均分20%的学生安排一对一辅导，预期可将不及格率降低50%。",
+            },
+            {
+                "title": "引入数据驱动的教学反馈机制，每学期末基于问卷数据调整教学策略",
+                "direction": "建立教学数据看板，持续追踪学生在关键指标上的变化趋势，为下一轮教学改进提供量化依据。",
+            },
         ]
-        suggestions = [
-            CourseSuggestion(
-                suggestion="针对计算机专业学生增加实践案例和编程练习",
-                evidence="计算机专业学生整体满意度显著低于其他专业",
-                direction="将理论课时与实践课时比例调整为1:1，预期满意度提升15%"
-            )
-        ]
+
+        for i, f in enumerate(findings[:5]):
+            template = suggestion_templates[i % len(suggestion_templates)]
+            suggestions.append(CourseSuggestion(
+                suggestion=template["title"],
+                evidence=f.evidence,
+                direction=template["direction"],
+            ))
+
+        suggestions = suggestions[:5]
+
+        logger.info("自动生成 %d 条发现、%d 条建议", len(findings), len(suggestions))
         return findings, suggestions
