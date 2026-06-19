@@ -81,22 +81,51 @@ class LLMClient:
             self.retry_delay = Config.LLM_RETRY_DELAY
 
     def _call_with_retry(self, messages: List[Dict], response_format: Optional[BaseModel] = None) -> Any:
-        """带重试机制的API调用，处理速率限制和超时"""
+        """带重试机制的API调用，处理速率限制和超时
+
+        DeepSeek API 不支持 beta.chat.completions.parse 结构化输出，
+        因此使用 json_object 模式 + 手动 Pydantic 解析。
+        """
         if self.offline_mode:
             raise Exception("离线模式下无法调用API")
+
+        # 如果需要结构化输出，预先构造带 JSON Schema 的消息（避免重试时重复拼接）
+        if response_format:
+            schema_json = response_format.model_json_schema()
+            schema_str = json.dumps(schema_json, ensure_ascii=False)
+            augmented_messages = [
+                *messages[:-1],
+                {
+                    "role": messages[-1]["role"],
+                    "content": messages[-1]["content"] + (
+                        f"\n\n【输出格式要求 - 必须严格遵守的JSON Schema】\n{schema_str}"
+                    ),
+                },
+            ]
+        else:
+            augmented_messages = messages
 
         for attempt in range(self.max_retries):
             try:
                 kwargs = {
                     "model": self.model,
-                    "messages": messages,
+                    "messages": augmented_messages,
                     "temperature": Config.LLM_TEMPERATURE,
                     "top_p": Config.LLM_TOP_P,
                     "max_tokens": Config.LLM_MAX_TOKENS,
                 }
                 if response_format:
-                    kwargs["response_format"] = response_format
-                return self.client.beta.chat.completions.parse(**kwargs)
+                    kwargs["response_format"] = {"type": "json_object"}
+
+                response = self.client.chat.completions.create(**kwargs)
+
+                if response_format:
+                    # 手动解析 JSON 响应为 Pydantic 模型
+                    content = response.choices[0].message.content
+                    parsed_dict = json.loads(content)
+                    return response_format.model_validate(parsed_dict)
+
+                return response
             except RateLimitError:
                 if attempt == self.max_retries - 1:
                     raise Exception("DeepSeek API 速率限制超限，请等待1分钟后重试")
@@ -139,7 +168,7 @@ class LLMClient:
 """
         messages = [{"role": "user", "content": prompt}]
         response = self._call_with_retry(messages, response_format=CandidateQuestionsResponse)
-        return response.choices[0].message.parsed.questions
+        return response.questions
 
     def generate_findings_and_suggestions(
         self,
@@ -184,8 +213,7 @@ class LLMClient:
 """
         messages = [{"role": "user", "content": prompt}]
         response = self._call_with_retry(messages, response_format=FindingsAndSuggestionsResponse)
-        parsed = response.choices[0].message.parsed
-        return parsed.findings, parsed.suggestions
+        return response.findings, response.suggestions
 
     # ------------------------------
     # 离线模式支持（用于演示）
