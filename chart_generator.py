@@ -24,6 +24,10 @@ logger = get_logger(__name__)
 import matplotlib
 matplotlib.use("Agg")  # 非交互式后端
 
+# 提高 PIL 解压炸弹阈值，防止大尺寸图表报错
+from PIL import Image
+Image.MAX_IMAGE_PIXELS = None  # 禁用像素限制
+
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 from matplotlib import font_manager as fm
@@ -290,10 +294,17 @@ class ChartGenerator:
     # 4. 相关性热力图
     # ==================================================================
 
-    def correlation_heatmap(self, filename: str = "correlation_heatmap.png") -> Optional[Path]:
+    def correlation_heatmap(self, filename: str = "correlation_heatmap.png",
+                            max_cols: int = 15) -> Optional[Path]:
         numeric_cols = self._numeric_columns()
         if len(numeric_cols) < 2:
             return None
+
+        # 限制列数，避免热力图过大（PIL DecompressionBombError）
+        if len(numeric_cols) > max_cols:
+            # 优先选择方差较大的列（更有分析价值）
+            variances = self.df[numeric_cols].var().sort_values(ascending=False)
+            numeric_cols = list(variances.head(max_cols).index)
 
         corr_matrix = self.df[numeric_cols].corr()
         # Clean column names for display
@@ -312,7 +323,7 @@ class ChartGenerator:
             center=0, vmin=-1, vmax=1, square=True, linewidths=0.5,
             cbar_kws={"shrink": 0.8, "label": "Pearson r"}, ax=ax,
         )
-        ax.set_title("相关性热力图", fontweight="bold", fontsize=14, pad=12)
+        ax.set_title(f"相关性热力图（前{n}个高方差变量）", fontweight="bold", fontsize=14, pad=12)
         ax.tick_params(axis="both", labelsize=8, rotation=45)
         plt.tight_layout()
         path = self._save_fig(fig, filename)
