@@ -295,7 +295,7 @@ class ReportGenerator:
         n_rows = profile_meta.get("n_rows", "?")
         n_cols = profile_meta.get("n_columns", "?")
 
-        return [
+        lines = [
             "# 课程问卷数据统计分析报告",
             "",
             f"> **生成时间**：{self.generated_at}",
@@ -306,6 +306,57 @@ class ReportGenerator:
             "---",
             "",
         ]
+
+        # 执行摘要
+        lines.extend(self._render_executive_summary())
+        return lines
+
+    def _render_executive_summary(self) -> List[str]:
+        """生成执行摘要，快速概览报告核心发现。"""
+        lines = ["## 执行摘要", ""]
+
+        # 数据概览
+        meta = self.data_profile.get("meta", {})
+        overview = self.data_profile.get("overview", {})
+        n_rows = meta.get("n_rows", "?")
+        n_cols = meta.get("n_columns", "?")
+        field_types = overview.get("field_type_counts", {})
+
+        lines.append(f"本报告基于 **{n_rows}** 份有效问卷、**{n_cols}** 个调查维度，")
+        lines.append(f"共执行 **{len(self.valid_tasks)}** 项统计分析任务。")
+        lines.append("")
+
+        # 显著结果统计
+        sig = self._extract_significant_results()
+        n_sig_hypothesis = len(sig.get("hypothesis", []))
+        n_sig_anova = len(sig.get("anova", []))
+        n_sig_chi = len(sig.get("chi_square", []))
+        total_sig = n_sig_hypothesis + n_sig_anova + n_sig_chi
+
+        if total_sig > 0:
+            lines.append(f"### 关键发现")
+            lines.append(f"- 共发现 **{total_sig}** 个统计显著结果（p<0.05）")
+            if n_sig_anova > 0:
+                lines.append(f"- **{n_sig_anova}** 个 ANOVA 检验发现组间显著差异")
+            if n_sig_chi > 0:
+                lines.append(f"- **{n_sig_chi}** 个卡方检验发现类别分布显著不均")
+            if n_sig_hypothesis > 0:
+                lines.append(f"- **{n_sig_hypothesis}** 个假设检验拒绝原假设")
+        else:
+            lines.append(f"### 关键发现")
+            lines.append(f"> ⚠️ 本次分析未发现统计显著（p<0.05）的结果。")
+            lines.append(f"> 可能原因：样本量较小（n={n_rows}）、变量间真实差异不大、或测量精度有限。")
+            lines.append(f"> 以下报告基于描述性统计和探索性分析提供观察性建议。")
+
+        # 验证得分（如果有）
+        val_score = self.validation_result.get("meta", {}).get("score")
+        if val_score is not None:
+            val_pass = self.validation_result.get("meta", {}).get("overall_pass", False)
+            status = "✅ 通过" if val_pass else "⚠️ 待改进"
+            lines.append(f"- 合规性验证得分：**{val_score}/100**（{status}）")
+
+        lines.extend(["", "---", ""])
+        return lines
 
     def _render_toc(self) -> List[str]:
         lines = ["## 目录", ""]
@@ -424,6 +475,7 @@ class ReportGenerator:
 
         for i, field in enumerate(fields, 1):
             col = field.get("column", "?")
+            display_name = self._clean_field_name(col)
             inferred = field.get("inferred_type", "?")
             count = field.get("count", "?")
             miss = field.get("missing", 0)
@@ -442,7 +494,7 @@ class ReportGenerator:
             # 高缺失率标红提示
             warning = " ⚠️" if isinstance(miss_pct, (int, float)) and miss_pct > 30 else ""
             lines.append(
-                f"| {i} | {col} | {type_label} | {count} | {miss} | "
+                f"| {i} | {display_name} | {type_label} | {count} | {miss} | "
                 f"{miss_pct:.1f}%{warning} | {unique} |"
             )
 
@@ -481,6 +533,9 @@ class ReportGenerator:
         numeric_fields = [f for f in fields if f.get("inferred_type", "").startswith("numeric")]
         categorical_fields = [f for f in fields if f.get("inferred_type") == "categorical"]
 
+        # 元数据字段（不应在分类频数中详细展示）
+        _meta_columns = {"提交答卷时间", "所用时间", "来源详情", "序号"}
+
         if numeric_fields:
             lines.extend([
                 "| 字段名 | 样本量 | 均值 | 中位数 | 标准差 | 最小值 | 最大值 | 偏度 | 峰度 |",
@@ -491,7 +546,9 @@ class ReportGenerator:
                 if not stats or "error" in field:
                     continue
                 col = field.get("column", "?")
-                n = stats.get("n", "?")
+                display_name = self._clean_field_name(col)
+                # 兼容新旧 stats 键名
+                n = stats.get("n", stats.get("n_total", "?"))
                 mean = self._fmt(stats.get("mean"))
                 median = self._fmt(stats.get("median"))
                 std = self._fmt(stats.get("std"))
@@ -500,7 +557,7 @@ class ReportGenerator:
                 skew = self._fmt(stats.get("skewness"))
                 kurt = self._fmt(stats.get("kurtosis"))
                 lines.append(
-                    f"| {col} | {n} | {mean} | {median} | {std} | "
+                    f"| {display_name} | {n} | {mean} | {median} | {std} | "
                     f"{vmin} | {vmax} | {skew} | {kurt} |"
                 )
             lines.append("")
@@ -508,18 +565,25 @@ class ReportGenerator:
             lines.append("*无连续数值型字段可供描述统计。*")
             lines.append("")
 
-        # 分类字段频数分布
+        # 分类字段频数分布（跳过元数据字段，最多展示 8 个）
         if categorical_fields:
             lines.extend([
                 "## 3.2 分类型字段频数分布",
                 "",
             ])
-            for field in categorical_fields[:5]:  # 最多展示5个
+            shown = 0
+            for field in categorical_fields:
                 col = field.get("column", "?")
+                display_name = self._clean_field_name(col)
+                # 跳过元数据和技术ID字段
+                if col in _meta_columns:
+                    continue
+                if shown >= 8:
+                    break
                 stats = field.get("stats", {})
                 freq = stats.get("frequency_distribution", {})
 
-                lines.append(f"### {col}")
+                lines.append(f"### {display_name}")
                 lines.append("")
                 lines.append("| 类别 | 频数 | 占比 |")
                 lines.append("|------|------|------|")
@@ -530,6 +594,7 @@ class ReportGenerator:
                         f"{info.get('pct', 0):.1f}% |"
                     )
                 lines.append("")
+                shown += 1
 
         # 图表展示
         lines.extend([
@@ -613,6 +678,7 @@ class ReportGenerator:
         for col, info in pe.items():
             if not isinstance(info, dict) or "error" in info:
                 continue
+            display_name = self._clean_field_name(col)
             n = info.get("n", "?")
             mean = self._fmt(info.get("mean"))
             std = self._fmt(info.get("std"))
@@ -622,7 +688,7 @@ class ReportGenerator:
             kurt = self._fmt(info.get("kurtosis_excess"))
             cv = f"{info['cv_pct']:.1f}" if info.get("cv_pct") is not None else "-"
             lines.append(
-                f"| {col} | {n} | {mean} | {std} | {med} | "
+                f"| {display_name} | {n} | {mean} | {std} | {med} | "
                 f"{iqr} | {skew} | {kurt} | {cv} |"
             )
         lines.append("")
@@ -644,12 +710,13 @@ class ReportGenerator:
         for col, info in ie.items():
             if not isinstance(info, dict) or "error" in info:
                 continue
+            display_name = self._clean_field_name(col)
             n = info.get("n", "?")
             mean_ci = info.get("mean_ci")
             std_ci = info.get("std_ci")
             mean_ci_str = f"[{mean_ci[0]:.4f}, {mean_ci[1]:.4f}]" if mean_ci and len(mean_ci) == 2 else "-"
             std_ci_str = f"[{std_ci[0]:.4f}, {std_ci[1]:.4f}]" if std_ci and len(std_ci) == 2 else "-"
-            lines.append(f"| {col} | {n} | {mean_ci_str} | {std_ci_str} |")
+            lines.append(f"| {display_name} | {n} | {mean_ci_str} | {std_ci_str} |")
         lines.append("")
         return lines
 
@@ -779,6 +846,7 @@ class ReportGenerator:
         for col, info in dist.items():
             if not isinstance(info, dict) or "error" in info:
                 continue
+            display_name = self._clean_field_name(col)
             n = info.get("n", "?")
 
             sw = info.get("shapiro_wilk", {})
@@ -803,7 +871,7 @@ class ReportGenerator:
                 normality = "-"
 
             lines.append(
-                f"| {col} | {n} | {sw_stat} | {sw_p_str} | "
+                f"| {display_name} | {n} | {sw_stat} | {sw_p_str} | "
                 f"{dp_stat} | {dp_p_str} | {normality} |"
             )
 
@@ -1173,6 +1241,26 @@ class ReportGenerator:
         if isinstance(val, float):
             return f"{val:.{precision}f}"
         return str(val)
+
+    @staticmethod
+    def _clean_field_name(col: str) -> str:
+        """清洗字段名，去掉问卷平台的技术前缀，提取可读的中文名称。
+
+        示例：
+            'col_1_你的性别是' → '你的性别是'
+            'col_122._竞技运动如跑鞋传感器智能教练等' → '竞技运动如跑鞋传感器智能教练等'
+            'col_17你将来有可能...' → '你将来有可能...'
+            '提交答卷时间' → '提交答卷时间'
+        """
+        import re
+        # 去掉 col_数字 前缀（后可选跟 _ 或 .）
+        cleaned = re.sub(r'^col_\d+(?:[\._])?\s*', '', col)
+        # 如果去掉前缀后为空，保留原名
+        if not cleaned:
+            return col
+        # 去掉残留的前导下划线或点号
+        cleaned = cleaned.lstrip('._')
+        return cleaned if cleaned else col
 
 
 # ==================================================================
