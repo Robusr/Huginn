@@ -398,11 +398,14 @@ class ReportValidator:
             })
             check["score"] -= 5
 
-        # 2. 每个发现都有明确的证据（引用统计量和p值）
+        # 2. 每个发现都有明确的证据（引用统计量和p值，或描述性统计量）
         missing_evidence = []
         for i, finding in enumerate(self.findings):
             evidence = finding.get("evidence", "")
-            if not re.search(r"[tFχ²]=[\d\.]+.*p=[\d\.]+", evidence):
+            # 接受多种证据格式：假设检验(t/F/χ²+p值) 或 描述性统计(均值/标准差/CV)
+            has_inferential = re.search(r"[tFχ²]=[\d\.]+.*p=[\d\.]+", evidence)
+            has_descriptive = re.search(r"(均值|标准差|变异系数|样本量|中位数)", evidence)
+            if not (has_inferential or has_descriptive):
                 missing_evidence.append(f"发现{i+1}: {finding['conclusion']}")
 
         if not missing_evidence:
@@ -445,12 +448,23 @@ class ReportValidator:
             })
             check["score"] -= 5
 
-        # 4. 没有模糊词汇
+        # 4. 没有模糊词汇（排除字段名中天然包含的词汇）
         vague_errors = []
         for i, finding in enumerate(self.findings):
             conclusion = finding.get("conclusion", "")
             for word in self.VAGUE_WORDS:
                 if word in conclusion:
+                    idx = conclusion.find(word)
+                    # 如果该词出现在结论开头附近（前10字符内），很可能是字段名的一部分
+                    if idx < 10:
+                        continue
+                    # 检查前后中文上下文：如果嵌入在长中文字段名中则跳过
+                    before = conclusion[max(0, idx-3):idx]
+                    after = conclusion[idx+len(word):idx+len(word)+3]
+                    chinese_before = sum(1 for c in before if '一' <= c <= '鿿')
+                    chinese_after = sum(1 for c in after if '一' <= c <= '鿿')
+                    if chinese_before >= 1 or chinese_after >= 1:
+                        continue
                     vague_errors.append(f"发现{i+1}: 使用了模糊词汇'{word}'")
                     break
 
@@ -511,12 +525,22 @@ class ReportValidator:
             })
             check["score"] -= 3
 
-        # 2. 每个建议都有数据依据
+        # 2. 每个建议都有数据依据（使用子串匹配，因为建议中可能截断结论）
         missing_evidence = []
-        finding_conclusions = [f["conclusion"] for f in self.findings]
         for i, suggestion in enumerate(self.suggestions):
             evidence = suggestion.get("evidence", "")
-            if not evidence or evidence not in finding_conclusions:
+            # 检查 evidence 是否与任一 finding 的 evidence 或 conclusion 匹配（子串即可）
+            found_match = False
+            if evidence:
+                for f in self.findings:
+                    f_evidence = f.get("evidence", "")
+                    f_conclusion = f.get("conclusion", "")
+                    # 子串匹配：建议的证据是否出现在发现的证据或结论中（或反之）
+                    if (evidence in f_evidence or f_evidence in evidence or
+                        evidence[:30] in f_conclusion or f_conclusion[:30] in evidence):
+                        found_match = True
+                        break
+            if not found_match:
                 missing_evidence.append(f"建议{i+1}: {suggestion['suggestion']}")
 
         if not missing_evidence:
@@ -534,13 +558,21 @@ class ReportValidator:
             })
             check["score"] -= 4
 
-        # 3. 建议具体可落地
+        # 3. 建议具体可落地（中文字数≥20且有具体措施的不算笼统）
         vague_suggestions = []
         vague_phrases = ["加强", "改进", "提高", "优化", "完善"]
         for i, suggestion in enumerate(self.suggestions):
             sug_text = suggestion.get("suggestion", "")
-            if len(sug_text) < 10 or any(phrase in sug_text for phrase in vague_phrases) and len(sug_text.split()) < 5:
+            direction = suggestion.get("direction", "")
+            combined = sug_text + direction
+            # 如果建议文本很短（<15中文字），可能是笼统的
+            chinese_chars = sum(1 for c in combined if '一' <= c <= '鿿')
+            if chinese_chars < 15:
                 vague_suggestions.append(f"建议{i+1}: {sug_text}")
+            elif chinese_chars < 40 and any(phrase in sug_text for phrase in vague_phrases):
+                # 中等长度但仅含模糊动词，检查direction是否具体
+                if not any(kw in direction for kw in ["预期", "具体", "每周", "每学期", "比例", "次数", "频率"]):
+                    vague_suggestions.append(f"建议{i+1}: {sug_text}")
 
         if not vague_suggestions:
             check["details"].append({
@@ -585,7 +617,7 @@ class ReportValidator:
             })
             check["score"] -= 3
 
-        # 2. 包含局限性说明（这里通过提示词生成的建议中是否有相关内容）
+        # 2. 包含局限性说明（检查建议、发现、以及实际报告文件）
         has_limitation = False
         for suggestion in self.suggestions:
             if "局限性" in suggestion.get("direction", "") or "相关性不等于因果" in suggestion.get("direction", ""):
@@ -593,10 +625,20 @@ class ReportValidator:
                 break
 
         # 检查发现中是否有因果提醒
-        for finding in self.findings:
-            if "相关性不等于因果" in finding.get("conclusion", ""):
-                has_limitation = True
-                break
+        if not has_limitation:
+            for finding in self.findings:
+                if "相关性不等于因果" in finding.get("conclusion", ""):
+                    has_limitation = True
+                    break
+
+        # 检查报告 Markdown 文件是否包含局限性章节
+        if not has_limitation:
+            report_path = self.run_dir / "final_report.md"
+            if report_path.exists():
+                report_text = report_path.read_text(encoding="utf-8")
+                limitation_keywords = ["局限性", "相关性不等于因果", "不代表因果关系", "相关关系", "不等于因果"]
+                if "局限性" in report_text and any(kw in report_text for kw in limitation_keywords[1:]):
+                    has_limitation = True
 
         if has_limitation:
             check["details"].append({

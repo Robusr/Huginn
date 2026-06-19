@@ -146,47 +146,9 @@ def run_agent(
         json.dump([s.model_dump() for s in suggestions], f, ensure_ascii=False, indent=2)
 
     # ------------------------------
-    # 步骤8：合规性验证（在报告生成前运行，确保证书附录完整）
+    # 步骤8：生成完整分析报告
     # ------------------------------
-    print("\n[8/9]  运行合规性验证...")
-    try:
-        from report_validator import ReportValidator
-        validator = ReportValidator(str(run_dir))
-        val_result = validator.run_all_checks()
-        score = val_result["meta"]["score"]
-        passed = val_result["meta"]["overall_pass"]
-        print(f"       验证得分: {score}/100")
-        print(f"       整体结果: {'Done 通过' if passed else 'Error 不通过'}")
-
-        # 打印各模块得分
-        module_map = Config.MODULE_NAMES
-        for check_name, check_data in val_result["checks"].items():
-            status = "Done" if check_data["pass"] else "Error"
-            label = module_map.get(check_name, check_name)
-            print(f"         {status} {label}: {check_data['score']}分")
-
-        # 打印改进建议
-        suggestions = val_result.get("improvement_suggestions", [])
-        if suggestions and not passed:
-            print(f"\n       改进建议:")
-            for sug in suggestions[:3]:
-                print(f"         {sug}")
-    except FileNotFoundError as e:
-        logger.warning("验证所需文件缺失: %s", e)
-        print(f"       Warn: 验证所需文件缺失: {e}")
-        print(f"       提示: 可稍后手动运行 python report_validator.py {run_dir}")
-    except ImportError as e:
-        logger.warning("缺少验证依赖: %s", e)
-        print(f"       Warn: 缺少验证依赖: {e}")
-    except Exception as e:
-        logger.error("验证失败", exc_info=True)
-        print(f"       Warn: 验证失败: {e}")
-        print(f"       提示: 可稍后手动运行 python report_validator.py {run_dir}")
-
-    # ------------------------------
-    # 步骤9：生成完整分析报告（含合规性附录）
-    # ------------------------------
-    print("\n[9/9]  生成完整课程分析报告...")
+    print("\n[8/9]  生成完整课程分析报告...")
     try:
         from report_generator import ReportGenerator
         report_gen = ReportGenerator(run_dir, user_requirement)
@@ -204,6 +166,44 @@ def run_agent(
         logger.error("报告生成失败", exc_info=True)
         print(f"       Warn: 报告生成失败: {e}")
         print(f"       提示: 可稍后手动运行 python report_generator.py {run_dir}")
+
+    # ------------------------------
+    # 步骤9：合规性验证（报告已生成，可以检查报告文件）
+    # ------------------------------
+    print("\n[9/9]  运行合规性验证...")
+    try:
+        from report_validator import ReportValidator
+        validator = ReportValidator(str(run_dir))
+        val_result = validator.run_all_checks()
+        score = val_result["meta"]["score"]
+        passed = val_result["meta"]["overall_pass"]
+        print(f"       验证得分: {score}/100")
+        print(f"       整体结果: {'Done 通过' if passed else 'Error 不通过'}")
+
+        # 打印各模块得分
+        module_map = Config.MODULE_NAMES
+        for check_name, check_data in val_result["checks"].items():
+            status = "Done" if check_data["pass"] else "Error"
+            label = module_map.get(check_name, check_name)
+            print(f"         {status} {label}: {check_data['score']}分")
+
+        # 打印改进建议
+        improvement_suggestions = val_result.get("improvement_suggestions", [])
+        if improvement_suggestions and not passed:
+            print(f"\n       改进建议:")
+            for sug in improvement_suggestions[:3]:
+                print(f"         {sug}")
+    except FileNotFoundError as e:
+        logger.warning("验证所需文件缺失: %s", e)
+        print(f"       Warn: 验证所需文件缺失: {e}")
+        print(f"       提示: 可稍后手动运行 python report_validator.py {run_dir}")
+    except ImportError as e:
+        logger.warning("缺少验证依赖: %s", e)
+        print(f"       Warn: 缺少验证依赖: {e}")
+    except Exception as e:
+        logger.error("验证失败", exc_info=True)
+        print(f"       Warn: 验证失败: {e}")
+        print(f"       提示: 可稍后手动运行 python report_validator.py {run_dir}")
 
     # ------------------------------
     # 完成
