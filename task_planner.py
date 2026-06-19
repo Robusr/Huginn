@@ -182,10 +182,19 @@ class TaskPlanner:
     def _generate_default_tasks(self) -> List[Dict]:
         """当有效任务不足时，自动生成默认的基础分析任务"""
         default_tasks = []
-        numeric_cols = [f["column"] for f in self.data_profile["fields"]
-                        if f["inferred_type"].startswith("numeric")]
-        categorical_cols = [f["column"] for f in self.data_profile["fields"]
-                            if f["inferred_type"] == "categorical"]
+        # 排除元数据列（序号、来源详情等不适合分析的列）
+        _exclude_columns = {"序号", "来源详情", "提交答卷时间", "所用时间"}
+
+        numeric_cols = [
+            f["column"] for f in self.data_profile["fields"]
+            if f["inferred_type"].startswith("numeric")
+            and f["column"] not in _exclude_columns
+        ]
+        categorical_cols = [
+            f["column"] for f in self.data_profile["fields"]
+            if f["inferred_type"] == "categorical"
+            and f["column"] not in _exclude_columns
+        ]
         binary_cats = [c for c in categorical_cols if self.column_info[c]["unique"] == 2]
         multi_cats = [c for c in categorical_cols if self.column_info[c]["unique"] >= 3]
 
@@ -237,26 +246,39 @@ class TaskPlanner:
         每个补充循环有最大迭代次数限制，防止数据类型不足时的无限循环。
         """
         MAX_SUPPLEMENT_PER_TYPE = 5
+        _exclude_columns = {"序号", "来源详情", "提交答卷时间", "所用时间"}
 
         anova_count = sum(1 for t in tasks if t["method"] == "ANOVA")
         chi_count = sum(1 for t in tasks if t["method"] == "卡方检验")
         t_count = sum(1 for t in tasks if t["method"] in ["t检验", "配对t检验"])
 
+        # 预筛选可用列
+        multi_cats = [c for c in self.column_info
+                      if self.column_info[c]["inferred_type"] == "categorical"
+                      and self.column_info[c]["unique"] >= 3
+                      and c not in _exclude_columns]
+        categorical_cols = [c for c in self.column_info
+                            if self.column_info[c]["inferred_type"] == "categorical"
+                            and c not in _exclude_columns]
+        binary_cats = [c for c in self.column_info
+                       if self.column_info[c]["inferred_type"] == "categorical"
+                       and self.column_info[c]["unique"] == 2
+                       and c not in _exclude_columns]
+        numeric_cols = [c for c in self.column_info
+                        if self.column_info[c]["inferred_type"].startswith("numeric")
+                        and c not in _exclude_columns]
+
         # 补充ANOVA到最低要求
         anova_attempts = 0
         while anova_count < Config.TASK_MIN_REQUIREMENTS["ANOVA"] and anova_attempts < MAX_SUPPLEMENT_PER_TYPE:
             anova_attempts += 1
-            multi_cats = [c for c in self.column_info
-                          if self.column_info[c]["inferred_type"] == "categorical"
-                          and self.column_info[c]["unique"] >= 3]
-            numeric_cols = [c for c in self.column_info
-                            if self.column_info[c]["inferred_type"].startswith("numeric")]
             idx = min(anova_count, len(multi_cats) - 1)
-            if idx >= 0 and len(multi_cats) > idx and len(numeric_cols) >= 1:
+            num_idx = min(anova_count, len(numeric_cols) - 1)
+            if idx >= 0 and len(multi_cats) > idx and num_idx >= 0:
                 tasks.append({
                     "task_id": 200 + anova_count,
-                    "question": f"不同{clean_field_name(multi_cats[idx])}的学生在{clean_field_name(numeric_cols[0])}上是否存在显著差异？",
-                    "variables": [numeric_cols[0], multi_cats[idx]],
+                    "question": f"不同{clean_field_name(multi_cats[idx])}的学生在{clean_field_name(numeric_cols[num_idx])}上是否存在显著差异？",
+                    "variables": [numeric_cols[num_idx], multi_cats[idx]],
                     "method": "ANOVA",
                     "value": "补充ANOVA任务以满足要求"
                 })
@@ -268,8 +290,6 @@ class TaskPlanner:
         chi_attempts = 0
         while chi_count < Config.TASK_MIN_REQUIREMENTS["chi_square"] and chi_attempts < MAX_SUPPLEMENT_PER_TYPE:
             chi_attempts += 1
-            categorical_cols = [c for c in self.column_info
-                                if self.column_info[c]["inferred_type"] == "categorical"]
             idx1, idx2 = chi_count % len(categorical_cols), (chi_count + 1) % len(categorical_cols)
             if len(categorical_cols) >= 2 and idx1 != idx2:
                 tasks.append({
@@ -287,11 +307,6 @@ class TaskPlanner:
         t_attempts = 0
         while t_count < Config.TASK_MIN_REQUIREMENTS["t_test"] and t_attempts < MAX_SUPPLEMENT_PER_TYPE:
             t_attempts += 1
-            binary_cats = [c for c in self.column_info
-                           if self.column_info[c]["inferred_type"] == "categorical"
-                           and self.column_info[c]["unique"] == 2]
-            numeric_cols = [c for c in self.column_info
-                            if self.column_info[c]["inferred_type"].startswith("numeric")]
             num_idx = min(t_count, len(numeric_cols) - 1)
             if len(binary_cats) >= 1 and num_idx >= 0 and len(numeric_cols) > num_idx:
                 tasks.append({
