@@ -19,7 +19,7 @@ from datetime import datetime
 
 import streamlit as st
 
-from config import Config
+from config import Config, clean_field_name
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -210,20 +210,39 @@ def main():
                 col3.metric("缺失率", f"{meta.get('total_missing_pct', 0):.1f}%")
                 col4.metric("重复行", overview.get("duplicate_rows", 0))
 
-                st.subheader("字段类型分布")
-                type_counts = overview.get("field_type_counts", {})
-                type_labels = Config.TYPE_LABELS
-                cols = st.columns(len(type_counts) if type_counts else 1)
-                for i, (ftype, count) in enumerate(sorted(type_counts.items())):
-                    cols[i % len(cols)].metric(
-                        type_labels.get(ftype, ftype), count
-                    )
+                st.divider()
 
+                # 字段类型 + 执行统计
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.subheader("字段类型分布")
+                    type_counts = overview.get("field_type_counts", {})
+                    type_labels = Config.TYPE_LABELS
+                    cols = st.columns(len(type_counts) if type_counts else 1)
+                    for i, (ftype, count) in enumerate(sorted(type_counts.items())):
+                        cols[i % len(cols)].metric(
+                            type_labels.get(ftype, ftype), count
+                        )
+                with c2:
+                    st.subheader("执行统计")
+                    valid_tasks = results.get("valid_tasks", [])
+                    findings = results.get("findings", [])
+                    suggestions = results.get("suggestions", [])
+                    charts = results.get("charts", [])
+                    val = results.get("validation_result")
+                    val_score = val.get("meta", {}).get("score", "?") if val else "?"
+
+                    st.metric("执行任务", f"{len(valid_tasks)} 项")
+                    st.metric("数据发现", f"{len(findings)} 条")
+                    st.metric("课程建议", f"{len(suggestions)} 条")
+                    st.metric("验证得分", f"{val_score}/100")
+
+                st.divider()
                 st.subheader("字段详情")
                 field_data = []
                 for f in fields:
                     field_data.append({
-                        "字段名": f.get("column"),
+                        "字段名": clean_field_name(f.get("column", "")),
                         "类型": type_labels.get(f.get("inferred_type", ""), f.get("inferred_type")),
                         "有效值": f.get("count"),
                         "缺失": f"{f.get('missing_pct', 0):.1f}%",
@@ -259,7 +278,7 @@ def main():
                     for col, info in pe.items():
                         if isinstance(info, dict) and "error" not in info:
                             pe_data.append({
-                                "字段": col,
+                                "字段": clean_field_name(col),
                                 "样本量": info.get("n"),
                                 "均值": f"{info.get('mean', 0):.4f}",
                                 "标准差": f"{info.get('std', 0):.4f}",
@@ -377,7 +396,30 @@ def main():
         with tabs[6]:
             report_md = results.get("report_md", "")
             if report_md:
-                st.markdown(report_md)
+                # 提供下载和预览切换
+                view_mode = st.radio(
+                    "查看方式",
+                    ["📖 章节预览", "📄 原始 Markdown"],
+                    horizontal=True,
+                )
+                if view_mode == "📄 原始 Markdown":
+                    st.code(report_md, language="markdown")
+                else:
+                    # 按章节分割报告，折叠显示
+                    sections = report_md.split("\n# ")
+                    # 第一部分是报告头
+                    if sections:
+                        st.markdown(sections[0])
+                    for sec in sections[1:]:
+                        sec = sec.strip()
+                        if not sec:
+                            continue
+                        # 提取章节标题
+                        title_end = sec.find("\n")
+                        title = sec[:title_end].strip() if title_end > 0 else sec[:80]
+                        # 折叠显示
+                        with st.expander(f"# {title}", expanded=len(sections) <= 4):
+                            st.markdown(sec)
             else:
                 st.info("未找到完整报告文件")
 
