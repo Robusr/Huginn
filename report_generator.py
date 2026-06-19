@@ -22,7 +22,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
-from config import Config
+from config import Config, clean_field_name
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -475,7 +475,7 @@ class ReportGenerator:
 
         for i, field in enumerate(fields, 1):
             col = field.get("column", "?")
-            display_name = self._clean_field_name(col)
+            display_name = clean_field_name(col)
             inferred = field.get("inferred_type", "?")
             count = field.get("count", "?")
             miss = field.get("missing", 0)
@@ -546,7 +546,7 @@ class ReportGenerator:
                 if not stats or "error" in field:
                     continue
                 col = field.get("column", "?")
-                display_name = self._clean_field_name(col)
+                display_name = clean_field_name(col)
                 # 兼容新旧 stats 键名
                 n = stats.get("n", stats.get("n_total", "?"))
                 mean = self._fmt(stats.get("mean"))
@@ -574,7 +574,7 @@ class ReportGenerator:
             shown = 0
             for field in categorical_fields:
                 col = field.get("column", "?")
-                display_name = self._clean_field_name(col)
+                display_name = clean_field_name(col)
                 # 跳过元数据和技术ID字段
                 if col in _meta_columns:
                     continue
@@ -678,7 +678,7 @@ class ReportGenerator:
         for col, info in pe.items():
             if not isinstance(info, dict) or "error" in info:
                 continue
-            display_name = self._clean_field_name(col)
+            display_name = clean_field_name(col)
             n = info.get("n", "?")
             mean = self._fmt(info.get("mean"))
             std = self._fmt(info.get("std"))
@@ -710,7 +710,7 @@ class ReportGenerator:
         for col, info in ie.items():
             if not isinstance(info, dict) or "error" in info:
                 continue
-            display_name = self._clean_field_name(col)
+            display_name = clean_field_name(col)
             n = info.get("n", "?")
             mean_ci = info.get("mean_ci")
             std_ci = info.get("std_ci")
@@ -846,7 +846,7 @@ class ReportGenerator:
         for col, info in dist.items():
             if not isinstance(info, dict) or "error" in info:
                 continue
-            display_name = self._clean_field_name(col)
+            display_name = clean_field_name(col)
             n = info.get("n", "?")
 
             sw = info.get("shapiro_wilk", {})
@@ -1241,27 +1241,6 @@ class ReportGenerator:
         if isinstance(val, float):
             return f"{val:.{precision}f}"
         return str(val)
-
-    @staticmethod
-    def _clean_field_name(col: str) -> str:
-        """清洗字段名，去掉问卷平台的技术前缀，提取可读的中文名称。
-
-        示例：
-            'col_1_你的性别是' → '你的性别是'
-            'col_122._竞技运动如跑鞋传感器智能教练等' → '竞技运动如跑鞋传感器智能教练等'
-            'col_17你将来有可能...' → '你将来有可能...'
-            '提交答卷时间' → '提交答卷时间'
-        """
-        import re
-        # 去掉 col_数字 前缀（后可选跟 _ 或 .）
-        cleaned = re.sub(r'^col_\d+(?:[\._])?\s*', '', col)
-        # 如果去掉前缀后为空，保留原名
-        if not cleaned:
-            return col
-        # 去掉残留的前导下划线或点号
-        cleaned = cleaned.lstrip('._')
-        return cleaned if cleaned else col
-
 
 # ==================================================================
 # 便捷函数
