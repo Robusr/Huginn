@@ -13,6 +13,7 @@ from typing import Any, Optional, Union
 import numpy as np
 import pandas as pd
 
+from config import clean_field_name
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -152,6 +153,7 @@ class ChartGenerator:
             return None
 
         cat = categorical_cols[0]
+        cat_display = clean_field_name(cat)
         vc = self.df[cat].value_counts().head(20)
 
         fig, axes = plt.subplots(1, 2, figsize=(14, 5))
@@ -162,7 +164,7 @@ class ChartGenerator:
         bars = ax1.bar(range(len(vc)), vc.values, color=colors)
         ax1.set_xticks(range(len(vc)))
         ax1.set_xticklabels(vc.index.astype(str), rotation=30, ha="right", fontsize=8)
-        ax1.set_title(f"{cat} 频数分布", fontweight="bold")
+        ax1.set_title(f"{cat_display} 频数分布", fontweight="bold")
         ax1.set_ylabel("频数")
         for bar, val in zip(bars, vc.values):
             ax1.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 1,
@@ -172,13 +174,14 @@ class ChartGenerator:
         ax2 = axes[1]
         if numeric_cols:
             num = numeric_cols[0]
+            num_display = clean_field_name(num)
             grouped = self.df.groupby(cat)[num].mean().sort_values(ascending=False).head(20)
             bars = ax2.bar(range(len(grouped)), grouped.values,
                            color=sns.color_palette("Blues_d", len(grouped)))
             ax2.set_xticks(range(len(grouped)))
             ax2.set_xticklabels(grouped.index.astype(str), rotation=30, ha="right", fontsize=8)
-            ax2.set_title(f"{cat} 分组 - {num} 均值", fontweight="bold")
-            ax2.set_ylabel(num)
+            ax2.set_title(f"{cat_display} 分组 - {num_display} 均值", fontweight="bold")
+            ax2.set_ylabel(num_display)
             for bar, val in zip(bars, grouped.values):
                 ax2.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
                          f"{val:.2f}", ha="center", va="bottom", fontsize=7)
@@ -187,7 +190,7 @@ class ChartGenerator:
                      ha="center", va="center", fontsize=12, color="gray")
             ax2.set_title("无数据")
 
-        fig.suptitle(f"柱状图 — {cat}", fontsize=14, fontweight="bold", y=1.02)
+        fig.suptitle(f"柱状图 — {cat_display}", fontsize=14, fontweight="bold", y=1.02)
         plt.tight_layout()
         path = self._save_fig(fig, filename)
         plt.close(fig)
@@ -209,6 +212,7 @@ class ChartGenerator:
 
         if n_cat >= 1:
             cat = categorical_cols[0]
+            cat_display = clean_field_name(cat)
             nrows = (n_num + 1) // 2
             ncols = 2 if n_num > 1 else 1
             fig, axes = plt.subplots(nrows, ncols, figsize=(12, 5 * nrows))
@@ -217,10 +221,12 @@ class ChartGenerator:
             axes_flat = axes.flatten()
             for i, num in enumerate(selected_num):
                 ax = axes_flat[i]
+                num_display = clean_field_name(num)
                 order = self.df.groupby(cat)[num].median().sort_values().index.tolist()
                 sns.boxplot(data=self.df, x=cat, y=num, order=order, ax=ax,
-                            palette="Set3", showfliers=True, fliersize=3)
-                ax.set_title(f"{num} 按 {cat} 分组", fontweight="bold")
+                            hue=cat, palette="Set3", showfliers=True, fliersize=3,
+                            legend=False)
+                ax.set_title(f"{num_display} 按 {cat_display} 分组", fontweight="bold")
                 ax.tick_params(axis="x", rotation=30, labelsize=8)
                 ax.set_xlabel("")
             for j in range(n_num, len(axes_flat)):
@@ -228,8 +234,11 @@ class ChartGenerator:
         else:
             fig, ax = plt.subplots(figsize=(8, 5))
             melted = self.df[selected_num].melt(var_name="变量", value_name="值")
-            sns.boxplot(data=melted, x="变量", y="值", ax=ax, palette="Set3",
-                        showfliers=True, fliersize=3)
+            # Clean variable names for display
+            melted["变量"] = melted["变量"].apply(clean_field_name)
+            sns.boxplot(data=melted, x="变量", y="值", ax=ax, hue="变量",
+                        palette="Set3", showfliers=True, fliersize=3,
+                        legend=False)
             ax.set_title("数值列箱线图", fontweight="bold")
             ax.tick_params(axis="x", rotation=30, labelsize=9)
 
@@ -248,28 +257,30 @@ class ChartGenerator:
             return None
 
         x_col, y_col = numeric_cols[0], numeric_cols[1]
+        x_display, y_display = clean_field_name(x_col), clean_field_name(y_col)
         categorical_cols = self._categorical_columns(min_unique=2, max_unique=10)
 
         fig, ax = plt.subplots(figsize=(8, 6))
         if categorical_cols:
             hue_col = categorical_cols[0]
+            hue_display = clean_field_name(hue_col)
             plot_data = self.df[[x_col, y_col, hue_col]].dropna()
             sns.scatterplot(data=plot_data, x=x_col, y=y_col, hue=hue_col,
                             ax=ax, alpha=0.7, palette="Set2",
                             edgecolor="k", linewidth=0.3)
-            ax.legend(title=hue_col, fontsize=8, title_fontsize=9, loc="best")
+            ax.legend(title=hue_display, fontsize=8, title_fontsize=9, loc="best")
         else:
             sns.regplot(data=self.df, x=x_col, y=y_col, ax=ax,
                         scatter_kws={"alpha": 0.6, "edgecolor": "k", "linewidth": 0.3},
                         line_kws={"color": "red", "linewidth": 1.5})
 
         corr = self.df[[x_col, y_col]].corr().iloc[0, 1]
-        ax.set_title(f"{y_col} vs {x_col}", fontweight="bold", fontsize=12)
+        ax.set_title(f"{y_display} vs {x_display}", fontweight="bold", fontsize=12)
         ax.text(0.97, 0.03, f"Pearson r = {corr:.4f}", transform=ax.transAxes,
                 ha="right", va="bottom", fontsize=10,
                 bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
-        ax.set_xlabel(x_col)
-        ax.set_ylabel(y_col)
+        ax.set_xlabel(x_display)
+        ax.set_ylabel(y_display)
         plt.tight_layout()
         path = self._save_fig(fig, filename)
         plt.close(fig)
@@ -285,6 +296,10 @@ class ChartGenerator:
             return None
 
         corr_matrix = self.df[numeric_cols].corr()
+        # Clean column names for display
+        display_labels = [clean_field_name(c) for c in numeric_cols]
+        corr_matrix.index = display_labels
+        corr_matrix.columns = display_labels
         n = len(numeric_cols)
         figsize = max(8, n * 0.9), max(6, n * 0.8)
 
