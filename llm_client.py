@@ -186,6 +186,9 @@ class LLMClient:
         if self.offline_mode:
             return self._load_offline_findings_suggestions()
 
+        # 预扫描：统计显著结果数量，帮助LLM判断数据质量
+        sig_count = self._count_significant_results(stats_results)
+
         prompt = f"""
 你是一位严谨的教育数据分析专家。请根据以下统计结果和数据画像，生成主要数据发现和课程改进建议。
 
@@ -198,22 +201,81 @@ class LLMClient:
 【统计结果】
 {json.dumps(stats_results, ensure_ascii=False, indent=2)}
 
-【绝对禁止】
-1. 禁止编造任何数据，所有结论必须严格基于提供的统计结果
-2. 禁止将相关性表述为因果关系，必须使用"相关"而非"导致"
-3. 禁止引用p≥0.05的结果作为显著发现
-4. 禁止添加任何没有数据支撑的主观臆断
-5. 禁止使用"可能"、"大概"等模糊词汇
+【预扫描信息】
+本次分析共发现 {sig_count} 个统计显著（p<0.05）的结果。
 
-【要求】
+【绝对禁止】
+1. 禁止编造任何数据或统计量，所有结论必须严格基于提供的统计结果
+2. 禁止将相关性表述为因果关系——必须使用"相关"、"关联"而非"导致"、"影响"、"造成"
+3. 严格禁止引用p≥0.05的结果作为"显著发现"——p≥0.05意味着"无统计显著差异/关联"
+4. 禁止添加任何没有数据支撑的主观臆断
+5. 禁止使用"可能"、"大概"、"也许"等模糊词汇
+6. 禁止使用"维持现状"、"无需改变"、"保持现有策略"等消极表述作为建议
+
+【p≥0.05 结果的正确处理方式】
+- 如果某个分析的p≥0.05，说明该分析未能发现统计显著的差异或关联
+- 你可以将其作为"探索性发现"提及，但必须在结论中明确指出"未发现统计显著证据"
+- 重要性评分应为1-2分（因为统计证据不足）
+- 不要将"无显著差异"包装成正面发现
+
+【数据发现要求】
 1. 每个发现必须引用具体的统计量和p值，例如："模块A的平均难度显著高于其他模块（F=4.23, p=0.023）"
-2. 主要发现筛选最有价值的5-8条，按重要性从高到低排序
-3. 课程建议必须与数据发现一一对应，每条建议要有明确的数据依据和可落地的改进方向
-4. 输出必须严格符合指定的JSON格式，不能有任何额外的解释或markdown标记
+2. 优先筛选p<0.05的显著结果作为主要发现（重要性4-5分）
+3. 如果显著结果不足5个，可以用p<0.15的"边际显著"结果补充（重要性2-3分），并明确标注"边际显著"
+4. 如果几乎无显著结果，诚实说明"本次数据未发现统计显著的模式"，并从描述性统计中提炼有价值的观察
+5. 主要发现筛选5-8条，按重要性从高到低排序
+
+【课程建议要求】
+1. 每条建议必须对应一条数据发现，引用具体证据
+2. 即使数据中缺乏显著结果，也应基于描述性统计（如频数分布、均值对比）提出观察性建议
+3. 建议必须具体可落地，包含：目标群体、改进措施、预期效果
+4. 示例正确格式："针对每周学习时间不足3小时的15名学生（占比38.5%），建议增加每周1次答疑时段，预期将作业完成率提升20%"
+5. 如果数据中揭示了学生行为模式（如时间分配、座位选择），即使无统计显著性也可作为观察性建议的依据
+6. 输出3-5条课程建议
+7. 输出必须严格符合指定的JSON格式，不能有任何额外的解释或markdown标记
 """
         messages = [{"role": "user", "content": prompt}]
         response = self._call_with_retry(messages, response_format=FindingsAndSuggestionsResponse)
         return response.findings, response.suggestions
+
+    @staticmethod
+    def _count_significant_results(stats_results: Dict) -> int:
+        """预扫描统计结果，统计p<0.05的显著结果数量。"""
+        count = 0
+        alpha = 0.05
+
+        # 扫描假设检验
+        ht = stats_results.get("hypothesis_tests", {}).get("tests", {})
+        for test_group in ht.values():
+            if not isinstance(test_group, dict):
+                continue
+            if "p_value" in test_group:
+                p = test_group["p_value"]
+                if isinstance(p, (int, float)) and p < alpha:
+                    count += 1
+            for val in test_group.values():
+                if isinstance(val, dict) and "p_value" in val:
+                    p = val["p_value"]
+                    if isinstance(p, (int, float)) and p < alpha:
+                        count += 1
+
+        # 扫描 ANOVA
+        anova = stats_results.get("anova", {}).get("tests", {})
+        for item in anova.values():
+            if isinstance(item, dict) and "p_value" in item:
+                p = item["p_value"]
+                if isinstance(p, (int, float)) and p < alpha:
+                    count += 1
+
+        # 扫描卡方
+        chi = stats_results.get("chi_square_goodness_of_fit", {}).get("tests", {})
+        for item in chi.values():
+            if isinstance(item, dict) and "p_value" in item:
+                p = item["p_value"]
+                if isinstance(p, (int, float)) and p < alpha:
+                    count += 1
+
+        return count
 
     # ------------------------------
     # 离线模式支持（用于演示）
