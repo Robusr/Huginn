@@ -146,31 +146,9 @@ def run_agent(
         json.dump([s.model_dump() for s in suggestions], f, ensure_ascii=False, indent=2)
 
     # ------------------------------
-    # 步骤8：生成完整分析报告
+    # 步骤8：合规性验证（在报告生成前运行，确保证书附录完整）
     # ------------------------------
-    print("\n[8/9]  生成完整课程分析报告...")
-    try:
-        from report_generator import ReportGenerator
-        report_gen = ReportGenerator(run_dir, user_requirement)
-        report_path = report_gen.save("final_report.md")
-        print(f"       报告已生成: {report_path.name}")
-        print(f"       章节: 7章 + 附录（合规性验证）")
-    except FileNotFoundError as e:
-        logger.warning("报告所需文件缺失: %s", e)
-        print(f"       Warn: 报告所需文件缺失: {e}")
-        print(f"       提示: 可稍后手动运行 python report_generator.py {run_dir}")
-    except ImportError as e:
-        logger.warning("缺少报告生成依赖: %s", e)
-        print(f"       Warn: 缺少报告生成依赖: {e}")
-    except Exception as e:
-        logger.error("报告生成失败", exc_info=True)
-        print(f"       Warn: 报告生成失败: {e}")
-        print(f"       提示: 可稍后手动运行 python report_generator.py {run_dir}")
-
-    # ------------------------------
-    # 步骤9：合规性验证
-    # ------------------------------
-    print("\n[9/9]  运行合规性验证...")
+    print("\n[8/9]  运行合规性验证...")
     try:
         from report_validator import ReportValidator
         validator = ReportValidator(str(run_dir))
@@ -204,6 +182,28 @@ def run_agent(
         logger.error("验证失败", exc_info=True)
         print(f"       Warn: 验证失败: {e}")
         print(f"       提示: 可稍后手动运行 python report_validator.py {run_dir}")
+
+    # ------------------------------
+    # 步骤9：生成完整分析报告（含合规性附录）
+    # ------------------------------
+    print("\n[9/9]  生成完整课程分析报告...")
+    try:
+        from report_generator import ReportGenerator
+        report_gen = ReportGenerator(run_dir, user_requirement)
+        report_path = report_gen.save("final_report.md")
+        print(f"       报告已生成: {report_path.name}")
+        print(f"       章节: 7章 + 附录（合规性验证）")
+    except FileNotFoundError as e:
+        logger.warning("报告所需文件缺失: %s", e)
+        print(f"       Warn: 报告所需文件缺失: {e}")
+        print(f"       提示: 可稍后手动运行 python report_generator.py {run_dir}")
+    except ImportError as e:
+        logger.warning("缺少报告生成依赖: %s", e)
+        print(f"       Warn: 缺少报告生成依赖: {e}")
+    except Exception as e:
+        logger.error("报告生成失败", exc_info=True)
+        print(f"       Warn: 报告生成失败: {e}")
+        print(f"       提示: 可稍后手动运行 python report_generator.py {run_dir}")
 
     # ------------------------------
     # 完成
