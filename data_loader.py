@@ -248,32 +248,81 @@ class DataLoader:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _extract_leading_number(val: Any) -> Optional[float]:
+        """从字符串中提取前导数字。
+
+        支持格式：
+            '5（非常感兴趣）' → 5.0
+            'B.1-2小时' → 1.0 (提取第一个数字)
+            '10小时' → 10.0
+            '4' → 4.0
+            '3.5' → 3.5
+            'A.男' → None (无数字开头)
+        """
+        import re
+        s = str(val).strip()
+        # 尝试直接转换纯数字
+        try:
+            return float(s)
+        except ValueError:
+            pass
+        # 去掉前导字母标记（如 A. B. C. D. E.）
+        s = re.sub(r'^[A-Ea-e]\.\s*', '', s)
+        # 提取开头的数字（支持小数）
+        m = re.match(r'(\d+(?:\.\d+)?)', s)
+        if m:
+            return float(m.group(1))
+        return None
+
+    @staticmethod
     def _infer_and_convert_types(df: pd.DataFrame) -> pd.DataFrame:
         """
         推断并转换数据类型：
-        - 看起来是数值的 object 列 → numeric
+        - 看起来是数值的 object 列 → numeric（含 Likert 量表、时长等混合格式）
         - 看起来是日期时间的 object 列 → datetime
+
+        数值提取分两阶段：
+        1. 直接 pd.to_numeric（纯数字存储为 object 的列）
+        2. 智能提取（Likert 量表如"5（非常感兴趣）"、时长如"10小时"）
         """
         df = df.copy()
         for col in df.columns:
-            if df[col].dtype != "object":
+            # 兼容 pandas 2 (object) 和 pandas 3 (string[python])
+            if not (df[col].dtype == "object" or pd.api.types.is_string_dtype(df[col])):
                 continue
             series = df[col].dropna()
+            # 统一转为 object 以便 apply 操作
+            series = series.astype(object)
             if len(series) == 0:
                 continue
 
-            # 尝试转数值
+            # 阶段 1：尝试直接转数值（纯数字 object 列）
             converted = pd.to_numeric(series, errors="coerce")
             valid_ratio = converted.notna().sum() / len(series)
             if valid_ratio >= 0.85:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
                 continue
 
-            # 尝试转日期时间
-            converted_dt = pd.to_datetime(series, errors="coerce", infer_datetime_format=True)
+            # 阶段 2：智能提取前导数字（Likert 量表、时长等混合格式）
+            extracted = series.apply(DataLoader._extract_leading_number)
+            n_valid = extracted.notna().sum()
+            extract_ratio = n_valid / len(series)
+            n_unique = extracted.dropna().nunique()
+            # 要求：≥70% 可提取数字，唯一值 ≥ 2（排除常量列），
+            # 且唯一值 < 样本量（如果不是 ≥90% 高置信度提取，还需要唯一值 ≤ 50）
+            if extract_ratio >= 0.70 and n_unique >= 2:
+                if extract_ratio >= 0.90 or n_unique <= 50:
+                    df[col] = df[col].apply(DataLoader._extract_leading_number)
+                    continue
+
+            # 尝试转日期时间（静默模式，避免大量警告日志）
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                converted_dt = pd.to_datetime(series, errors="coerce")
             dt_valid_ratio = converted_dt.notna().sum() / len(series)
             if dt_valid_ratio >= 0.85:
-                df[col] = pd.to_datetime(df[col], errors="coerce", infer_datetime_format=True)
+                df[col] = pd.to_datetime(df[col], errors="coerce")
 
         return df
 
