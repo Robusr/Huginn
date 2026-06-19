@@ -121,7 +121,7 @@ def main():
         run_button = st.button(
             "🚀 开始分析",
             type="primary",
-            use_container_width=True,
+            width="stretch",
             disabled=uploaded_file is None,
         )
 
@@ -248,7 +248,7 @@ def main():
                         "缺失": f"{f.get('missing_pct', 0):.1f}%",
                         "唯一值": f.get("unique"),
                     })
-                st.dataframe(field_data, use_container_width=True)
+                st.dataframe(field_data, width="stretch")
             else:
                 st.info("未找到数据画像文件")
 
@@ -262,7 +262,7 @@ def main():
                     desc = chart_labels.get(chart_path.stem, chart_path.stem)
                     with cols[i % 2]:
                         st.subheader(desc)
-                        st.image(str(chart_path), use_container_width=True)
+                        st.image(str(chart_path), width="stretch")
             else:
                 st.info("未生成可视化图表")
 
@@ -284,7 +284,7 @@ def main():
                                 "标准差": f"{info.get('std', 0):.4f}",
                                 "中位数": f"{info.get('median', 0):.4f}",
                             })
-                    st.dataframe(pe_data, use_container_width=True)
+                    st.dataframe(pe_data, width="stretch")
 
                 # 假设检验显著结果
                 ht = stats.get("hypothesis_tests", {}).get("tests", {})
@@ -301,7 +301,7 @@ def main():
                                 "p值": f"**{p:.4f}**",
                             })
                 if sig_tests:
-                    st.dataframe(sig_tests, use_container_width=True)
+                    st.dataframe(sig_tests, width="stretch")
                 else:
                     st.info("无显著假设检验结果")
 
@@ -320,7 +320,7 @@ def main():
                             })
                 if sig_anova:
                     st.subheader("ANOVA 显著结果")
-                    st.dataframe(sig_anova, use_container_width=True)
+                    st.dataframe(sig_anova, width="stretch")
 
                 # 数量自查
                 cc = stats.get("counts_check", {})
@@ -439,7 +439,7 @@ def main():
                         data=f.read(),
                         file_name="final_report.md",
                         mime="text/markdown",
-                        use_container_width=True,
+                        width="stretch",
                     )
 
         # Word 报告
@@ -452,7 +452,7 @@ def main():
                         data=f.read(),
                         file_name="final_report.docx",
                         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                        use_container_width=True,
+                        width="stretch",
                     )
 
         # 统计结果 JSON
@@ -465,7 +465,7 @@ def main():
                         data=f.read(),
                         file_name="stats_results.json",
                         mime="application/json",
-                        use_container_width=True,
+                        width="stretch",
                     )
 
         # 打包下载
@@ -481,7 +481,7 @@ def main():
                 data=zip_buffer,
                 file_name=f"{run_dir.name}.zip",
                 mime="application/zip",
-                use_container_width=True,
+                width="stretch",
             )
 
 
