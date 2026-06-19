@@ -14,7 +14,7 @@
 import json
 from typing import Any, Dict, List
 from llm_client import CandidateQuestion
-from config import Config
+from config import Config, clean_field_name
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -193,7 +193,7 @@ class TaskPlanner:
         if len(multi_cats) >= 1 and len(numeric_cols) >= 1:
             default_tasks.append({
                 "task_id": 100,
-                "question": f"不同{multi_cats[0]}的学生在{numeric_cols[0]}上是否存在显著差异？",
+                "question": f"不同{clean_field_name(multi_cats[0])}的学生在{clean_field_name(numeric_cols[0])}上是否存在显著差异？",
                 "variables": [numeric_cols[0], multi_cats[0]],
                 "method": "ANOVA",
                 "value": "了解不同群体的差异"
@@ -203,7 +203,7 @@ class TaskPlanner:
         if len(categorical_cols) >= 2:
             default_tasks.append({
                 "task_id": 101,
-                "question": f"{categorical_cols[0]}与{categorical_cols[1]}是否存在显著关联？",
+                "question": f"{clean_field_name(categorical_cols[0])}与{clean_field_name(categorical_cols[1])}是否存在显著关联？",
                 "variables": [categorical_cols[0], categorical_cols[1]],
                 "method": "卡方检验",
                 "value": "了解分类变量间的关联"
@@ -213,7 +213,7 @@ class TaskPlanner:
         if len(binary_cats) >= 1 and len(numeric_cols) >= 1:
             default_tasks.append({
                 "task_id": 102,
-                "question": f"不同{binary_cats[0]}的学生在{numeric_cols[0]}上是否存在显著差异？",
+                "question": f"不同{clean_field_name(binary_cats[0])}的学生在{clean_field_name(numeric_cols[0])}上是否存在显著差异？",
                 "variables": [numeric_cols[0], binary_cats[0]],
                 "method": "t检验",
                 "value": "了解二分类群体的差异"
@@ -223,7 +223,7 @@ class TaskPlanner:
         if len(numeric_cols) >= 1:
             default_tasks.append({
                 "task_id": 103,
-                "question": f"{numeric_cols[0]}的分布是否符合正态分布？",
+                "question": f"{clean_field_name(numeric_cols[0])}的分布是否符合正态分布？",
                 "variables": [numeric_cols[0]],
                 "method": "分布检验",
                 "value": "了解数据分布特征"
@@ -232,23 +232,31 @@ class TaskPlanner:
         return default_tasks
 
     def _ensure_minimum_requirements(self, tasks: List[Dict]) -> List[Dict]:
-        """确保满足课程作业的最低统计要求：≥2ANOVA、≥2卡方、≥3t检验"""
+        """确保满足课程作业的最低统计要求：≥2ANOVA、≥2卡方、≥3t检验。
+
+        每个补充循环有最大迭代次数限制，防止数据类型不足时的无限循环。
+        """
+        MAX_SUPPLEMENT_PER_TYPE = 5
+
         anova_count = sum(1 for t in tasks if t["method"] == "ANOVA")
         chi_count = sum(1 for t in tasks if t["method"] == "卡方检验")
         t_count = sum(1 for t in tasks if t["method"] in ["t检验", "配对t检验"])
 
         # 补充ANOVA到最低要求
-        while anova_count < Config.TASK_MIN_REQUIREMENTS["ANOVA"]:
+        anova_attempts = 0
+        while anova_count < Config.TASK_MIN_REQUIREMENTS["ANOVA"] and anova_attempts < MAX_SUPPLEMENT_PER_TYPE:
+            anova_attempts += 1
             multi_cats = [c for c in self.column_info
                           if self.column_info[c]["inferred_type"] == "categorical"
                           and self.column_info[c]["unique"] >= 3]
             numeric_cols = [c for c in self.column_info
                             if self.column_info[c]["inferred_type"].startswith("numeric")]
-            if len(multi_cats) >= 2 and len(numeric_cols) >= 1:
+            idx = min(anova_count, len(multi_cats) - 1)
+            if idx >= 0 and len(multi_cats) > idx and len(numeric_cols) >= 1:
                 tasks.append({
                     "task_id": 200 + anova_count,
-                    "question": f"不同{multi_cats[1]}的学生在{numeric_cols[0]}上是否存在显著差异？",
-                    "variables": [numeric_cols[0], multi_cats[1]],
+                    "question": f"不同{clean_field_name(multi_cats[idx])}的学生在{clean_field_name(numeric_cols[0])}上是否存在显著差异？",
+                    "variables": [numeric_cols[0], multi_cats[idx]],
                     "method": "ANOVA",
                     "value": "补充ANOVA任务以满足要求"
                 })
@@ -257,14 +265,17 @@ class TaskPlanner:
                 break
 
         # 补充卡方到最低要求
-        while chi_count < Config.TASK_MIN_REQUIREMENTS["chi_square"]:
+        chi_attempts = 0
+        while chi_count < Config.TASK_MIN_REQUIREMENTS["chi_square"] and chi_attempts < MAX_SUPPLEMENT_PER_TYPE:
+            chi_attempts += 1
             categorical_cols = [c for c in self.column_info
                                 if self.column_info[c]["inferred_type"] == "categorical"]
-            if len(categorical_cols) >= 3:
+            idx1, idx2 = chi_count % len(categorical_cols), (chi_count + 1) % len(categorical_cols)
+            if len(categorical_cols) >= 2 and idx1 != idx2:
                 tasks.append({
                     "task_id": 210 + chi_count,
-                    "question": f"{categorical_cols[1]}与{categorical_cols[2]}是否存在显著关联？",
-                    "variables": [categorical_cols[1], categorical_cols[2]],
+                    "question": f"{clean_field_name(categorical_cols[idx1])}与{clean_field_name(categorical_cols[idx2])}是否存在显著关联？",
+                    "variables": [categorical_cols[idx1], categorical_cols[idx2]],
                     "method": "卡方检验",
                     "value": "补充卡方检验任务以满足要求"
                 })
@@ -273,17 +284,20 @@ class TaskPlanner:
                 break
 
         # 补充t检验到最低要求
-        while t_count < Config.TASK_MIN_REQUIREMENTS["t_test"]:
+        t_attempts = 0
+        while t_count < Config.TASK_MIN_REQUIREMENTS["t_test"] and t_attempts < MAX_SUPPLEMENT_PER_TYPE:
+            t_attempts += 1
             binary_cats = [c for c in self.column_info
                            if self.column_info[c]["inferred_type"] == "categorical"
                            and self.column_info[c]["unique"] == 2]
             numeric_cols = [c for c in self.column_info
                             if self.column_info[c]["inferred_type"].startswith("numeric")]
-            if len(binary_cats) >= 1 and len(numeric_cols) >= 2:
+            num_idx = min(t_count, len(numeric_cols) - 1)
+            if len(binary_cats) >= 1 and num_idx >= 0 and len(numeric_cols) > num_idx:
                 tasks.append({
                     "task_id": 220 + t_count,
-                    "question": f"不同{binary_cats[0]}的学生在{numeric_cols[1]}上是否存在显著差异？",
-                    "variables": [numeric_cols[1], binary_cats[0]],
+                    "question": f"不同{clean_field_name(binary_cats[0])}的学生在{clean_field_name(numeric_cols[num_idx])}上是否存在显著差异？",
+                    "variables": [numeric_cols[num_idx], binary_cats[0]],
                     "method": "t检验",
                     "value": "补充t检验任务以满足要求"
                 })
