@@ -33,6 +33,25 @@ def _env_float(key: str, default: float) -> float:
     return float(os.getenv(key, str(default)))
 
 
+def clean_field_name(col: str) -> str:
+    """清洗字段名，去掉问卷平台的技术前缀，提取可读的中文名称。
+
+    示例：
+        'col_1_你的性别是' → '你的性别是'
+        'col_122._竞技运动如跑鞋传感器智能教练等' → '竞技运动如跑鞋传感器智能教练等'
+        'col_17你将来有可能...' → '你将来有可能...'
+        '提交答卷时间' → '提交答卷时间'
+    """
+    import re
+    # 去掉 col_数字 前缀（后可选跟 _ 或 .）
+    cleaned = re.sub(r'^col_\d+(?:[\._])?\s*', '', col)
+    if not cleaned:
+        return col
+    # 去掉残留的前导下划线或点号
+    cleaned = cleaned.lstrip('._')
+    return cleaned if cleaned else col
+
+
 class Config:
     # =========================================================================
     # LLM / API 配置
