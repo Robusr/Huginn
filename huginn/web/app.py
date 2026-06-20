@@ -288,10 +288,15 @@ def main():
                     if isinstance(test, dict) and "p_value" in test:
                         p = test.get("p_value", 1.0)
                         if isinstance(p, (int, float)) and p < Config.SIGNIFICANCE_THRESHOLD:
+                            stat_val = test.get('t_statistic') or test.get('statistic') or ''
+                            if isinstance(stat_val, (int, float)):
+                                stat_str = f"{stat_val:.4f}"
+                            else:
+                                stat_str = str(stat_val)
                             sig_tests.append({
                                 "检验": test.get("method", name),
                                 "变量": test.get("variables", test.get("column", "")),
-                                "统计量": f"{test.get('t_statistic') or test.get('statistic') or '':.4f}",
+                                "统计量": stat_str,
                                 "p值": f"**{p:.4f}**",
                             })
                 if sig_tests:
@@ -306,10 +311,15 @@ def main():
                     if isinstance(test, dict) and "p_value" in test:
                         p = test.get("p_value", 1.0)
                         if isinstance(p, (int, float)) and p < Config.SIGNIFICANCE_THRESHOLD:
+                            f_val = test.get('F_statistic', 0)
+                            if isinstance(f_val, (int, float)):
+                                f_str = f"{f_val:.4f}"
+                            else:
+                                f_str = str(f_val)
                             sig_anova.append({
                                 "因变量": test.get("dependent"),
                                 "因子": test.get("factor"),
-                                "F值": f"{test.get('F_statistic', 0):.4f}",
+                                "F值": f_str,
                                 "p值": f"**{p:.4f}**",
                             })
                 if sig_anova:
