@@ -29,6 +29,12 @@ class TaskPlanner:
         self.data_profile = data_profile
         self.domain_context = domain_context or detect_domain_context(data_profile)
         self.column_info = {f["column"]: f for f in data_profile["fields"]}
+        n_rows = int(data_profile.get("meta", {}).get("n_rows", 0))
+        self._exclude_columns = {
+            f["column"]
+            for f in data_profile.get("fields", [])
+            if not f.get("column") or is_identifier_or_noise(f["column"], f, n_rows)
+        }
         # 统计方法与验证函数映射
         self.valid_methods = {
             "t检验": self._validate_t_test,
@@ -252,17 +258,17 @@ class TaskPlanner:
         multi_cats = [c for c in self.column_info
                       if self.column_info[c]["inferred_type"] == "categorical"
                       and self.column_info[c]["unique"] >= 3
-                      and c not in _exclude_columns]
+                      and c not in self._exclude_columns]
         categorical_cols = [c for c in self.column_info
                             if self.column_info[c]["inferred_type"] == "categorical"
-                            and c not in _exclude_columns]
+                            and c not in self._exclude_columns]
         binary_cats = [c for c in self.column_info
                        if self.column_info[c]["inferred_type"] == "categorical"
                        and self.column_info[c]["unique"] == 2
-                       and c not in _exclude_columns]
+                       and c not in self._exclude_columns]
         numeric_cols = [c for c in self.column_info
                         if self.column_info[c]["inferred_type"].startswith("numeric")
-                        and c not in _exclude_columns]
+                        and c not in self._exclude_columns]
 
         # 补充ANOVA到最低要求
         while anova_count < Config.TASK_MIN_REQUIREMENTS["ANOVA"]:
