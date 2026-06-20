@@ -141,7 +141,7 @@ class LLMClient:
 
     @classmethod
     def _skill_references_dir(cls) -> Path:
-        return Path(__file__).resolve().parent / "skill" / "references"
+        return Path(__file__).resolve().parent.parent.parent / "skill" / "references"
 
     @classmethod
     def _load_step_skill_prompt(cls, step: str) -> str:
