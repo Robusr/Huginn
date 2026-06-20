@@ -182,8 +182,12 @@ class TaskPlanner:
     def _generate_default_tasks(self) -> List[Dict]:
         """当有效任务不足时，自动生成默认的基础分析任务"""
         default_tasks = []
-        # 排除元数据列（序号、来源详情等不适合分析的列）
-        _exclude_columns = {"序号", "来源详情", "提交答卷时间", "所用时间"}
+        # 排除不适合作为分析维度的列
+        _exclude_columns = {
+            "序号", "来源详情", "提交答卷时间", "所用时间",
+            "Row_ID", "Order_ID", "Customer_ID", "Product_ID",
+            "Postal_Code", "Zip", "zip",
+        }
 
         numeric_cols = [
             f["column"] for f in self.data_profile["fields"]
@@ -202,7 +206,7 @@ class TaskPlanner:
         if len(multi_cats) >= 1 and len(numeric_cols) >= 1:
             default_tasks.append({
                 "task_id": 100,
-                "question": f"不同{clean_field_name(multi_cats[0])}的学生在{clean_field_name(numeric_cols[0])}上是否存在显著差异？",
+                "question": f"不同{clean_field_name(multi_cats[0])}的群体在{clean_field_name(numeric_cols[0])}上是否存在显著差异？",
                 "variables": [numeric_cols[0], multi_cats[0]],
                 "method": "ANOVA",
                 "value": "了解不同群体的差异"
@@ -222,7 +226,7 @@ class TaskPlanner:
         if len(binary_cats) >= 1 and len(numeric_cols) >= 1:
             default_tasks.append({
                 "task_id": 102,
-                "question": f"不同{clean_field_name(binary_cats[0])}的学生在{clean_field_name(numeric_cols[0])}上是否存在显著差异？",
+                "question": f"不同{clean_field_name(binary_cats[0])}的群体在{clean_field_name(numeric_cols[0])}上是否存在显著差异？",
                 "variables": [numeric_cols[0], binary_cats[0]],
                 "method": "t检验",
                 "value": "了解二分类群体的差异"
@@ -246,7 +250,11 @@ class TaskPlanner:
         每个补充循环有最大迭代次数限制，防止数据类型不足时的无限循环。
         """
         MAX_SUPPLEMENT_PER_TYPE = 5
-        _exclude_columns = {"序号", "来源详情", "提交答卷时间", "所用时间"}
+        _exclude_columns = {
+            "序号", "来源详情", "提交答卷时间", "所用时间",
+            "Row_ID", "Order_ID", "Customer_ID", "Product_ID",
+            "Postal_Code", "Zip", "zip",
+        }
 
         anova_count = sum(1 for t in tasks if t["method"] == "ANOVA")
         chi_count = sum(1 for t in tasks if t["method"] == "卡方检验")
@@ -277,7 +285,7 @@ class TaskPlanner:
             if idx >= 0 and len(multi_cats) > idx and num_idx >= 0:
                 tasks.append({
                     "task_id": 200 + anova_count,
-                    "question": f"不同{clean_field_name(multi_cats[idx])}的学生在{clean_field_name(numeric_cols[num_idx])}上是否存在显著差异？",
+                    "question": f"不同{clean_field_name(multi_cats[idx])}的群体在{clean_field_name(numeric_cols[num_idx])}上是否存在显著差异？",
                     "variables": [numeric_cols[num_idx], multi_cats[idx]],
                     "method": "ANOVA",
                     "value": "补充ANOVA任务以满足要求"
@@ -311,7 +319,7 @@ class TaskPlanner:
             if len(binary_cats) >= 1 and num_idx >= 0 and len(numeric_cols) > num_idx:
                 tasks.append({
                     "task_id": 220 + t_count,
-                    "question": f"不同{clean_field_name(binary_cats[0])}的学生在{clean_field_name(numeric_cols[num_idx])}上是否存在显著差异？",
+                    "question": f"不同{clean_field_name(binary_cats[0])}的群体在{clean_field_name(numeric_cols[num_idx])}上是否存在显著差异？",
                     "variables": [numeric_cols[num_idx], binary_cats[0]],
                     "method": "t检验",
                     "value": "补充t检验任务以满足要求"
