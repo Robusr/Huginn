@@ -25,19 +25,19 @@ description: Generate formal Chinese course/questionnaire analysis reports from 
 
 ## 当前流水线
 
-默认入口是 `agent_runner.py`，不是 `main.py`。
+默认入口是 `huginn/cli/runner.py`（旧称 `agent_runner.py`），不是 `main.py`。
 
 完整流程为：
 
-1. `data_loader.py` 读取并清洗 Excel/CSV。
-2. `data_profiler.py` 生成 `data_profile.json`。
-3. `llm_client.py` 根据数据画像和用户需求生成候选分析问题。
-4. `task_planner.py` 将候选问题筛选为可执行统计任务，保存 `valid_tasks.json`。
-5. `analysis_engine.py` 执行统计分析，保存 `stats_results.json`。
-6. `chart_generator.py` 生成图表和 `chart_metadata.json`。
-7. `llm_client.py` 基于统计结果生成 `findings.json` 和 `suggestions.json`。
-8. `report_validator.py` 生成验证结果。
-9. `report_generator.py` 生成并导出 `md`、`docx`、`pdf`，再发布到外层 `outputs/`。
+1. `huginn/data/loader.py` 读取并清洗 Excel/CSV。
+2. `huginn/data/profiler.py` 生成 `data_profile.json`。
+3. `huginn/llm/client.py` 根据数据画像和用户需求生成候选分析问题。
+4. `huginn/planning/task_planner.py` 将候选问题筛选为可执行统计任务，保存 `valid_tasks.json`。
+5. `huginn/analysis/engine.py` 执行统计分析，保存 `stats_results.json`。
+6. `huginn/analysis/charts.py` 生成图表和 `chart_metadata.json`。
+7. `huginn/llm/client.py` 基于统计结果生成 `findings.json` 和 `suggestions.json`。
+8. `huginn/reporting/validator.py` 生成验证结果。
+9. `huginn/reporting/generator.py` 生成并导出 `md`、`docx`、`pdf`，再发布到外层 `outputs/`。
 
 ## 模型职责边界
 
@@ -96,7 +96,7 @@ description: Generate formal Chinese course/questionnaire analysis reports from 
 
 ## 最终报告结构
 
-最终报告由 `report_generator.py` 统一组织，默认采用以下正式报告结构：
+最终报告由 `huginn/reporting/generator.py` 统一组织，默认采用以下正式报告结构：
 
 1. 执行摘要
 2. 数据概览
@@ -159,7 +159,7 @@ description: Generate formal Chinese course/questionnaire analysis reports from 
 - `数学能力自评`
 - `编程能力自评`
 
-字段名清洗和标签映射应优先由 `label_utils.py` 完成。
+字段名清洗和标签映射应优先由 `huginn/core/label_utils.py` 完成。
 
 ## 报告风格
 

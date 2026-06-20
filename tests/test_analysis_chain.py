@@ -6,22 +6,22 @@ from types import SimpleNamespace
 
 import pandas as pd
 
-from analysis_engine import AnalysisEngine
-from analysis_planning import build_candidate_task_pool, build_field_registry
-from config import Config
-from data_loader import DataLoader
-from distinctive_feature_miner import mine_distinctive_features
-from domain_context import detect_domain_context
-from llm_client import (
+from huginn.analysis.engine import AnalysisEngine
+from huginn.planning.analysis_planning import build_candidate_task_pool, build_planning_field_map
+from huginn.core.config import Config
+from huginn.data.loader import DataLoader
+from huginn.planning.feature_miner import mine_distinctive_features
+from huginn.domain.context import detect_domain_context
+from huginn.llm.client import (
     ActionSuggestion,
     DataFinding,
     DiscoveredProblem,
     LLMClient,
     ReportWritingResponse,
 )
-from report_generator import ReportGenerator
-from report_validator import ReportValidator
-from task_planner import TaskPlanner
+from huginn.reporting.generator import ReportGenerator
+from huginn.reporting.validator import ReportValidator
+from huginn.planning.task_planner import TaskPlanner
 
 
 def _profile():
@@ -86,7 +86,7 @@ def test_domain_context_detects_retail_and_education_without_forcing_course_lang
 def test_retail_registry_and_pool_exclude_identifiers_and_use_generic_language():
     profile = _retail_profile()
     context = detect_domain_context(profile, "分析销售和利润")
-    registry = build_field_registry(profile, context)
+    registry = build_planning_field_map(profile, context)
     pool = build_candidate_task_pool(profile, registry, domain_context=context)
 
     columns = {item["column"] for item in registry["fields"]}
@@ -230,7 +230,7 @@ def test_toc_page_map_accounts_for_multi_page_findings_and_suggestions(tmp_path)
 
 
 def test_field_registry_and_task_pool_use_only_valid_columns():
-    registry = build_field_registry(_profile())
+    registry = build_planning_field_map(_profile())
     pool = build_candidate_task_pool(_profile(), registry)
 
     columns = {item["column"] for item in registry["fields"]}
@@ -246,7 +246,7 @@ def test_field_registry_and_task_pool_use_only_valid_columns():
 
 def test_llm_candidate_selection_maps_pool_ids_back_to_real_columns():
     profile = _profile()
-    registry = build_field_registry(profile)
+    registry = build_planning_field_map(profile)
     pool = build_candidate_task_pool(profile, registry)
     first = pool["tasks"][0]
 
@@ -675,7 +675,7 @@ def test_four_online_model_stages_are_audited_in_order():
     client._call_with_retry = fake_call
     profile = _retail_profile()
     context = detect_domain_context(profile, "分析销售和利润")
-    registry = build_field_registry(profile, context)
+    registry = build_planning_field_map(profile, context)
     pool = {
         "tasks": [
             {

@@ -20,11 +20,11 @@ from dotenv import load_dotenv
 from openai import OpenAI, APIError, BadRequestError, RateLimitError, APITimeoutError
 from pydantic import BaseModel, Field, ValidationError
 
-from analysis_planning import build_candidate_task_pool, build_field_registry
-from config import Config
-from domain_context import detect_domain_context
-from label_utils import humanize_column_name
-from logger import get_logger
+from huginn.planning.analysis_planning import build_candidate_task_pool, build_planning_field_map
+from huginn.core.config import Config
+from huginn.domain.context import detect_domain_context
+from huginn.core.label_utils import humanize_column_name
+from huginn.core.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -711,7 +711,7 @@ class LLMClient:
         """
         self._last_data_profile = data_profile
         context = domain_context or detect_domain_context(data_profile, user_requirement)
-        field_registry = field_registry or build_field_registry(data_profile, context)
+        field_registry = field_registry or build_planning_field_map(data_profile, context)
         task_pool = task_pool or build_candidate_task_pool(data_profile, field_registry, domain_context=context)
         if self.offline_mode:
             return self._load_offline_questions()
@@ -1200,7 +1200,7 @@ class LLMClient:
         """基于真实数据画像启发式生成候选问题（离线模式）。"""
         logger.info("离线模式：基于数据画像自动生成候选问题")
         context = detect_domain_context(self._last_data_profile)
-        registry = build_field_registry(self._last_data_profile, context)
+        registry = build_planning_field_map(self._last_data_profile, context)
         pool = build_candidate_task_pool(self._last_data_profile, registry, domain_context=context)
         selections = [
             CandidateTaskSelection(task_pool_id=item["task_pool_id"], value=item.get("value", ""), priority=3)

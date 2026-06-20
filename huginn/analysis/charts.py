@@ -14,8 +14,7 @@ from typing import Any, Dict, Optional, Union
 import numpy as np
 import pandas as pd
 
-from config import clean_field_name
-from logger import get_logger
+from huginn.core.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -31,8 +30,8 @@ import matplotlib.pyplot as plt
 from matplotlib import font_manager as fm
 import seaborn as sns
 
-from label_utils import humanize_column_name
-from domain_context import domain_keywords, is_identifier_or_noise
+from huginn.core.label_utils import humanize_column_name
+from huginn.domain.context import domain_keywords, is_identifier_or_noise
 
 
 def _install_chinese_font() -> None:
@@ -619,7 +618,7 @@ if __name__ == "__main__":
         print("用法：python chart_generator.py <file_path>")
         raise SystemExit(1)
 
-    from data_loader import load_and_clean
+    from huginn.data.loader import load_and_clean
 
     dataframe = load_and_clean(sys.argv[1])
     paths = generate_charts(dataframe)

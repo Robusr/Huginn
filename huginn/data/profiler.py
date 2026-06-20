@@ -16,8 +16,8 @@ import numpy as np
 import pandas as pd
 from scipy import stats as scipy_stats
 
-from config import Config
-from logger import get_logger
+from huginn.core.config import Config
+from huginn.core.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -314,7 +314,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     # 用 data_loader 先加载
-    from data_loader import load_and_clean
+    from huginn.data.loader import load_and_clean
 
     df = load_and_clean(sys.argv[1])
     profile = generate_profile(df)

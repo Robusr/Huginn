@@ -13,11 +13,11 @@
 """
 import json
 from typing import Any, Dict, List
-from llm_client import CandidateQuestion
-from config import Config
-from domain_context import detect_domain_context, domain_keywords, is_identifier_or_noise
-from label_utils import humanize_column_name
-from logger import get_logger
+from huginn.llm.client import CandidateQuestion
+from huginn.core.config import Config
+from huginn.domain.context import detect_domain_context, domain_keywords, is_identifier_or_noise
+from huginn.core.label_utils import humanize_column_name
+from huginn.core.logger import get_logger
 
 logger = get_logger(__name__)
 

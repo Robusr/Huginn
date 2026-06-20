@@ -22,7 +22,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
-from domain_registry import DomainConfig, FieldRole, GENERAL_BUSINESS
+from huginn.domain.registry import DomainConfig, FieldRole, GENERAL_BUSINESS
 
 
 # ============================================================================

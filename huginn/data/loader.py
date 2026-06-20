@@ -13,7 +13,7 @@ from typing import Optional, Union
 import pandas as pd
 import numpy as np
 
-from logger import get_logger
+from huginn.core.logger import get_logger
 
 logger = get_logger(__name__)
 

@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """Tests for domain_registry.py and field_registry.py."""
 import pytest
-from domain_registry import (
+from huginn.domain.registry import (
     detect_domain, get_domain_config, FieldRole,
     RETAIL_SALES, EDUCATION_SURVEY, GENERAL_BUSINESS,
 )
-from field_registry import build_field_registry, infer_field_role
+from huginn.domain.fields import build_field_registry, infer_field_role
 
 
 class TestDomainDetection:

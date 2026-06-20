@@ -23,8 +23,8 @@ import re
 from pathlib import Path
 from typing import Dict, List, Tuple, Any
 
-from config import Config
-from logger import get_logger
+from huginn.core.config import Config
+from huginn.core.logger import get_logger
 
 logger = get_logger(__name__)
 

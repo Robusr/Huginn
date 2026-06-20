@@ -19,8 +19,8 @@ from datetime import datetime
 
 import streamlit as st
 
-from config import Config, clean_field_name
-from logger import get_logger
+from huginn.core.config import Config, clean_field_name
+from huginn.core.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -31,12 +31,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
-
-# 将项目根目录加入搜索路径
-project_root = Path(__file__).parent
-if str(project_root) not in sys.path:
-    sys.path.insert(0, str(project_root))
-
 
 def load_run_results(run_dir: Path) -> dict:
     """加载运行结果目录中的所有内容。"""
@@ -145,7 +139,7 @@ def main():
         # 执行分析
         with st.spinner("🔄 正在执行分析流程，请稍候..."):
             try:
-                from agent_runner import run_agent
+                from huginn.cli.runner import run_agent
 
                 # 创建进度容器
                 progress_placeholder = st.empty()

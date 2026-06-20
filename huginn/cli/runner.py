@@ -19,19 +19,19 @@ import argparse
 import shutil
 from pathlib import Path
 from datetime import datetime
-from data_loader import load_and_clean
-from data_profiler import generate_profile
-from analysis_engine import AnalysisEngine
-from chart_generator import generate_charts
-from config import Config
-from analysis_planning import build_candidate_task_pool, build_field_registry, save_planning_artifacts
-from distinctive_feature_miner import mine_distinctive_features, save_distinctive_features
-from domain_context import detect_domain_context
-from logger import get_logger
-from llm_client import LLMClient
-from task_planner import TaskPlanner
-from domain_registry import detect_domain, get_domain_config, RETAIL_SALES
-from field_registry import build_field_registry, save_field_registry
+from huginn.data.loader import load_and_clean
+from huginn.data.profiler import generate_profile
+from huginn.analysis.engine import AnalysisEngine
+from huginn.analysis.charts import generate_charts
+from huginn.core.config import Config
+from huginn.planning.analysis_planning import build_candidate_task_pool, build_planning_field_map, save_planning_artifacts
+from huginn.planning.feature_miner import mine_distinctive_features, save_distinctive_features
+from huginn.domain.context import detect_domain_context
+from huginn.core.logger import get_logger
+from huginn.llm.client import LLMClient
+from huginn.planning.task_planner import TaskPlanner
+from huginn.domain.registry import detect_domain, get_domain_config
+from huginn.domain.fields import build_field_registry, save_field_registry
 
 logger = get_logger(__name__)
 
@@ -69,7 +69,7 @@ def publish_readable_exports(
 def run_validation(run_dir: Path) -> dict | None:
     """运行验证器并打印模块得分。"""
     try:
-        from report_validator import ReportValidator
+        from huginn.reporting.validator import ReportValidator
         validator = ReportValidator(str(run_dir))
         val_result = validator.run_all_checks()
         score = val_result["meta"]["score"]
@@ -113,7 +113,7 @@ def generate_report_bundle(
 ) -> tuple[Path | None, Path | None, Path | None, list[Path]]:
     """生成 md/docx/pdf；publish=True 时同步覆盖用户可看版本。"""
     try:
-        from report_generator import ReportGenerator
+        from huginn.reporting.generator import ReportGenerator
         report_gen = ReportGenerator(run_dir, user_requirement)
         report_path = report_gen.save("final_report.md")
         word_path = report_gen.export_word("final_report.docx")
@@ -245,7 +245,7 @@ def run_agent(
     # ------------------------------
     print("\n[3/11] 模型第1轮：规划合法统计任务...")
     llm_client = LLMClient(offline_mode=offline_mode)
-    field_registry = build_field_registry(data_profile, domain_context)
+    field_registry = build_planning_field_map(data_profile, domain_context)
     candidate_task_pool = build_candidate_task_pool(
         data_profile, field_registry, domain_context=domain_context
     )

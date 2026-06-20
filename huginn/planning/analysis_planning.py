@@ -12,15 +12,15 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
-from config import Config
-from domain_context import detect_domain_context, domain_keywords, is_identifier_or_noise
-from label_utils import humanize_column_name
+from huginn.core.config import Config
+from huginn.domain.context import detect_domain_context, domain_keywords, is_identifier_or_noise
+from huginn.core.label_utils import humanize_column_name
 
 
 NOISE_KEYWORDS = ["序号", "提交答卷时间", "所用时间", "来源", "来源详情"]
 
 
-def build_field_registry(
+def build_planning_field_map(
     data_profile: Dict[str, Any],
     domain_context: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
@@ -70,7 +70,7 @@ def build_candidate_task_pool(
 ) -> Dict[str, Any]:
     """Build executable candidate tasks with real columns and stable pool IDs."""
     context = domain_context or detect_domain_context(data_profile)
-    registry = field_registry or build_field_registry(data_profile, context)
+    registry = field_registry or build_planning_field_map(data_profile, context)
     fields = registry.get("fields", [])
     by_column = {item["column"]: item for item in fields}
 

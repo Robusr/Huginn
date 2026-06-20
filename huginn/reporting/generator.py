@@ -18,9 +18,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from config import Config
-from label_utils import clean_choice, humanize_column_name
-from logger import get_logger
+from huginn.core.config import Config
+from huginn.core.label_utils import clean_choice, humanize_column_name
+from huginn.core.logger import get_logger
 
 logger = get_logger(__name__)
 

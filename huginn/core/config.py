@@ -11,7 +11,7 @@
 集中化配置模块
 所有硬编码常量在此统一定义，支持环境变量覆盖。
 用法：
-    from config import Config
+    from huginn.core.config import Config
     model = Config.LLM_MODEL
     threshold = Config.SIGNIFICANCE_THRESHOLD
 """
@@ -130,22 +130,9 @@ class Config:
 
     # 业务分析模块开关（按 domain key 配置启用哪些模块）
     DOMAIN_MODULES: dict = {
-        "retail_sales": [
-            "loss_driver_analysis",
-            "discount_response_analysis",
-            "pareto_analysis",
-            "cross_dimension_analysis",
-        ],
+        "retail_sales": [],
         "education_survey": [],
         "general_business": [],
-    }
-
-    # 单个模块开关（可通过环境变量禁用）
-    BUSINESS_MODULES_ENABLED: dict = {
-        "loss_driver_analysis": _env("ENABLE_LOSS_DRIVER", "true").lower() == "true",
-        "discount_response_analysis": _env("ENABLE_DISCOUNT_ANALYZER", "true").lower() == "true",
-        "pareto_analysis": _env("ENABLE_PARETO", "true").lower() == "true",
-        "cross_dimension_analysis": _env("ENABLE_CROSS_DIM", "true").lower() == "true",
     }
 
     # =========================================================================
@@ -197,7 +184,8 @@ class Config:
         "statistical_quantity": "统计数量硬指标 (30分)",
         "statistical_validity": "统计结果有效性 (20分)",
         "findings_compliance": "数据发现合规性 (20分)",
-        "suggestions_reasonableness": "行动建议合理性 (10分)",
+        "suggestions_quality": "行动建议合理性 (10分)",
+        "business_analysis_completeness": "业务分析完整度 (10分)",
         "report_completeness": "报告完整性 (10分)",
     }
 

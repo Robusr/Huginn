@@ -23,7 +23,7 @@ try:  # pragma: no cover - scipy 是否存在由运行环境决定
 except Exception:  # pragma: no cover
     stats = None
 
-from label_utils import clean_choice, humanize_column_name
+from huginn.core.label_utils import clean_choice, humanize_column_name
 
 
 DIMENSION_ALIASES = {

@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "huginn"
+version = "1.1.0"
+description = "AI 驱动的多领域探索型数据分析智能体"
+requires-python = ">=3.9"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Robusr" }]
+
+[tool.setuptools.packages.find]
+include = ["huginn*"]

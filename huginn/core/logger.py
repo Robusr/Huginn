@@ -11,7 +11,7 @@
 统一日志模块
 首次调用 get_logger() 时自动配置 basicConfig，后续调用幂等。
 用法：
-    from logger import get_logger
+    from huginn.core.logger import get_logger
     logger = get_logger(__name__)
     logger.info("message")
 """

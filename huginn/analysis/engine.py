@@ -19,9 +19,9 @@ import statsmodels.api as sm
 from statsmodels.formula.api import ols
 from statsmodels.stats.multicomp import pairwise_tukeyhsd
 
-from config import Config
-from domain_context import is_identifier_or_noise
-from logger import get_logger
+from huginn.core.config import Config
+from huginn.domain.context import is_identifier_or_noise
+from huginn.core.logger import get_logger
 logger = get_logger(__name__)
 
 
@@ -284,7 +284,7 @@ class AnalysisEngine:
 
     def _build_column_info(self) -> dict[str, dict]:
         """构建列信息字典，供 run_tasks 类型检查使用（惰性初始化）。"""
-        from data_profiler import DataProfiler
+        from huginn.data.profiler import DataProfiler
         profiler = DataProfiler(self.df)
         profile = profiler.generate()
         return {f["column"]: f for f in profile["fields"]}
@@ -1114,7 +1114,7 @@ def run_analysis(
 
 # ------------------------------------------------------------------
 if __name__ == "__main__":
-    from logger import get_logger
+    from huginn.core.logger import get_logger
     _main_logger = get_logger("analysis_engine.main")
     import sys
 
@@ -1122,7 +1122,7 @@ if __name__ == "__main__":
         print("用法：python analysis_engine.py <file_path>")
         sys.exit(1)
 
-    from data_loader import load_and_clean
+    from huginn.data.loader import load_and_clean
     df = load_and_clean(sys.argv[1])
     results = run_analysis(df)
     cc = results.get("counts_check", {})

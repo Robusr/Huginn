@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/badge/Python-3.9+-blue.svg" alt="Python Version">
   <img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License">
   <img src="https://img.shields.io/badge/DeepSeek-API-orange.svg" alt="DeepSeek API">
-  <img src="https://img.shields.io/badge/Tests-55%20passed-success.svg" alt="Tests">
+  <img src="https://img.shields.io/badge/Tests-38%20passed-success.svg" alt="Tests">
   <img src="https://img.shields.io/badge/Domains-3%20types-informational.svg" alt="Domains">
   <img src="https://img.shields.io/badge/Status-Stable-brightgreen.svg" alt="Status">
 </p>
@@ -72,7 +72,7 @@
 ### 工程化基础设施
 - **集中化配置**：`config.py` 管理 60+ 配置项，涵盖 LLM 参数、统计阈值、领域模块开关、UI 标签、评分权重等，支持环境变量覆盖
 - **统一日志**：`logger.py` 幂等初始化，消除模块 import 时日志静默丢失的问题
-- **单元测试**：55 个测试覆盖 config / data_loader / domain_registry / evidence_table / task_planner，`pytest tests/ -v` 一键运行
+- **单元测试**：38 个测试覆盖完整分析链、领域检测、字段角色推断，`pytest tests/ -v` 一键运行
 
 ### 多 AI 平台原生支持
 - **DeepSeek API**（默认，中文效果最佳，性价比最高）
@@ -166,7 +166,7 @@ outputs/20260620_143022_课程问卷/
 # 验证所有模块正常工作
 pytest tests/ -v
 
-# 预期输出：55 passed in 0.30s
+# 预期输出：38 passed in ~1.7s
 ```
 
 ---
@@ -263,47 +263,48 @@ python main.py "你的文件.csv"
 ## 项目结构
 ```
 huginn/
-├── agent_runner.py              # 智能体主流程控制器（11 步完整管线）
-├── main.py                      # 一键全流程入口（v4 兼容，无 LLM）
-├── app.py                       # Streamlit 交互式 Web 界面
+├── app.py                       # Streamlit 启动入口（thin wrapper）
+├── main.py                      # 遗留 CLI 入口（已弃用，委托至新入口）
+├── pyproject.toml               # Python 包配置
 │
-├── config.py                    # 集中化配置管理（60+ 配置项，支持环境变量覆盖）
-├── logger.py                    # 统一日志模块（幂等初始化）
-│
-├── data_loader.py               # 数据加载与清洗（CSV/Excel）
-├── data_profiler.py             # 数据画像生成
-├── analysis_engine.py           # 核心统计分析引擎（全量 + 按需双模式）
-├── analysis_engine_patch.py     # 向后兼容 shim（已合并至 analysis_engine.py）
-├── chart_generator.py           # 可视化图表生成
-├── insight_generator.py         # 基础洞察提炼（规则引擎）
-│
-├── llm_client.py                # DeepSeek API 封装（4 轮 LLM 编排 + 结构化输出）
-├── task_planner.py              # 任务筛选与校验器
-│
-├── domain_registry.py           # 领域定义与自动检测（零售/教育/通用）
-├── field_registry.py            # 字段商务角色推断
-├── evidence_table.py            # 结构化证据表（防幻觉核心）
-├── granularity_detector.py      # 行级数据粒度检测
-├── loss_driver.py               # 亏损驱动分析（零售模块）
-├── discount_analyzer.py         # 折扣响应分析（零售模块）
-├── pareto_analyzer.py           # 集中度分析（零售模块）
-├── cross_dimension.py           # 交叉维度分析（零售模块）
-│
-├── report_generator.py          # 完整报告生成器（Markdown + Word，域自适应）
-├── report_validator.py          # 报告合规性验证器（100 分制，6 模块）
+├── huginn/                      # 核心 Python 包
+│   ├── __init__.py              # 版本信息
+│   ├── core/                    # 基础设施
+│   │   ├── config.py            # 集中化配置（60+ 配置项）
+│   │   ├── logger.py            # 统一日志
+│   │   └── label_utils.py       # 中文标签工具
+│   ├── data/                    # 数据层
+│   │   ├── loader.py            # CSV/Excel 加载
+│   │   └── profiler.py          # 数据画像
+│   ├── domain/                  # 领域检测
+│   │   ├── registry.py          # 领域注册表
+│   │   ├── context.py           # 领域上下文
+│   │   └── fields.py            # 字段角色推断
+│   ├── planning/                # 任务规划
+│   │   ├── task_planner.py      # 任务筛选器
+│   │   ├── analysis_planning.py # 分析规划
+│   │   └── feature_miner.py     # 特色信号挖掘
+│   ├── analysis/                # 统计分析
+│   │   ├── engine.py            # 统计推断引擎
+│   │   └── charts.py            # 图表生成
+│   ├── llm/                     # LLM 客户端
+│   │   └── client.py            # DeepSeek API（4 轮编排）
+│   ├── reporting/               # 报告生成
+│   │   ├── generator.py         # 报告生成器（MD + Word + PDF）
+│   │   └── validator.py         # 合规性验证器
+│   ├── web/                     # Web 界面
+│   │   └── app.py               # Streamlit 应用
+│   └── cli/                     # CLI 入口
+│       └── runner.py            # 主流程控制器（11 步管线）
 │
 ├── .env.example                 # 环境变量模板
 ├── .gitignore                   # Git 忽略规则
 ├── requirements.txt             # 依赖清单
 ├── README.md                    # 本文件
 │
-├── tests/                       # 单元测试（55 个）
-│   ├── conftest.py              # 共享测试夹具
-│   ├── test_config.py           # 配置模块测试（11 个）
-│   ├── test_data_loader.py      # 数据加载测试（9 个）
-│   ├── test_domain_registry.py  # 领域检测与字段角色测试
-│   ├── test_evidence_table.py   # 证据表与粒度检测测试
-│   └── test_task_planner.py     # 任务筛选测试（15 个）
+├── tests/                       # 单元测试（47 个）
+│   ├── test_analysis_chain.py   # 全流程集成测试（~30 个）
+│   └── test_domain_registry.py  # 领域检测与字段角色测试（~17 个）
 │
 ├── platforms/                   # 各 AI 平台适配文件
 │   ├── cursor/
@@ -602,14 +603,14 @@ export DEEPSEEK_API_KEY=sk-your-openai-key            # API Key
 ### Q: 如何贡献代码？
 A: 欢迎提交 Issue 和 Pull Request！贡献前请：
 1. 阅读下方 [开发指南](#开发指南)
-2. 确保 `pytest tests/ -v` 全部通过（预期 55 passed）
+2. 确保 `pytest tests/ -v` 全部通过（预期 38 passed）
 3. 遵循 PEP 8 代码规范，使用类型注解
 4. 新增功能需补充对应测试用例
 
 ### Q: 如何运行测试？
 A: 测试依赖已包含在 `requirements.txt` 中（`pytest>=7.0`）：
 ```bash
-pytest tests/ -v              # 全部测试（预期 55 passed）
+pytest tests/ -v              # 全部测试（预期 38 passed）
 pytest tests/ -v --tb=short   # 简洁输出模式
 ```
 详见下方 [开发指南 → 运行测试](#运行测试)。
@@ -676,18 +677,12 @@ pip install -r requirements.txt
 pytest tests/ -v
 
 # 指定模块
-pytest tests/test_config.py -v
-pytest tests/test_data_loader.py -v
+pytest tests/test_analysis_chain.py -v
 pytest tests/test_domain_registry.py -v
-pytest tests/test_evidence_table.py -v
-pytest tests/test_task_planner.py -v
 ```
 测试覆盖：
-- `test_config.py` — Config 默认值 + 环境变量覆盖（11 个测试）
-- `test_data_loader.py` — CSV/编码/中文/异常场景（9 个测试）
+- `test_analysis_chain.py` — 全流程集成测试：领域上下文、任务规划、数据加载、统计推断、报告生成、合规性验证
 - `test_domain_registry.py` — 领域检测 + 字段角色推断 + 注册表构建
-- `test_evidence_table.py` — 证据表操作 + 粒度检测 + 比率分母验证
-- `test_task_planner.py` — 验证逻辑 + 筛选流程 + 优先级排序（15 个测试）
 
 ### 配置管理
 所有硬编码值均由 `config.py` 中的 `Config` 类集中管理。修改默认值或通过环境变量覆盖：
@@ -718,7 +713,7 @@ export ENABLE_CROSS_DIM=true                # 启用交叉维度分析
 - **添加新的图表类型**：修改 `chart_generator.py`，添加对应的绘图方法
 - **扩展报告模板**：修改 `report_generator.py` 中的章节渲染方法，通过 `domain_config` 实现域自适应
 - **自定义 Streamlit 界面**：修改 `app.py`，添加新的标签页或组件
-- **添加测试**：在 `tests/` 目录下新建 `test_*.py`，参考 `conftest.py` 中的 fixture
+- **添加测试**：在 `tests/` 目录下新建 `test_*.py`，参考现有测试中的 fixture 和 helper 模式
 
 ---
 
