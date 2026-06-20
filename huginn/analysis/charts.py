@@ -359,6 +359,7 @@ class ChartGenerator:
             return None, {}
 
         # 限制列数，避免热力图过大（PIL DecompressionBombError）
+        max_cols = 20
         if len(numeric_cols) > max_cols:
             # 优先选择方差较大的列（更有分析价值）
             variances = self.df[numeric_cols].var().sort_values(ascending=False)
