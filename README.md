@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/Status-Stable-brightgreen.svg" alt="Status">
 </p>
 
-> **Fully automated data analysis agent**: upload an Excel/CSV file and automatically complete domain detection, intelligent data cleaning, field role inference, statistical inference, visualization, 4-round LLM insight extraction, domain-adaptive report generation, and compliance verification. Covers three domains: retail sales, education survey, and general business. Retail scenarios auto-activate four business analysis modules: loss driver analysis, discount response analysis, Pareto concentration analysis, and cross-dimension analysis. Strictly follows the core principle of "model makes decisions and interpretations only; all statistics are computed by Python." Built-in structured evidence table eliminates LLM hallucinations. Compliance verification can reach up to 100/100.
+> **Fully automated data analysis agent**: upload an Excel/CSV file and automatically complete domain detection, intelligent data cleaning, field role inference, statistical inference, visualization, 4-round LLM insight extraction, domain-adaptive report generation, and compliance verification. Covers three domains: retail sales, education survey, and general business. Retail scenarios auto-activate four business analysis modules: loss driver analysis, discount response analysis, Pareto concentration analysis, and cross-dimension analysis. Strictly follows the core principle of "model makes decisions and interpretations only; all statistics are computed by Python." Built-in structured evidence table eliminates LLM hallucinations. Statistical auto-fill ensures compliance even for datasets lacking multi-category variables. Compliance verification can reach up to **100/100**.
 
 ---
 
@@ -41,10 +41,11 @@ No need to specify analysis questions. The agent automatically understands data 
 - Point estimation (mean, variance, standard deviation, median, etc. -- 10 parameters)
 - Interval estimation (mean, variance, standard deviation, median, prediction intervals)
 - 6 types of hypothesis tests (t-test, paired t-test, Wilcoxon, Mann-Whitney, etc.)
-- One-way/Two-way ANOVA + Tukey post-hoc tests
+- One-way/Two-way ANOVA + Tukey post-hoc tests **(auto-fill ensures ≥2 ANOVA even without multi-category columns)**
 - Pearson chi-square tests (goodness-of-fit + independence)
 - Normality tests (Shapiro-Wilk + D'Agostino-Pearson)
 - Correlation analysis
+- **Intelligent auto-fill**: automatically supplements ANOVA, chi-square, and distribution tests to meet verification thresholds when task planning falls short
 
 ### Automatic Report Generation
 - **Domain-adaptive reports**: Retail 8 chapters / Education 7 chapters / General 7 chapters; chapter titles adjust automatically by domain
@@ -57,7 +58,7 @@ No need to specify analysis questions. The agent automatically understands data 
 ### Automatic Compliance Verification
 Built-in multi-domain validator that runs automatically after analysis and is written to the report appendix:
 - **Statistical Quantity (30 pts)**: >=5 point estimates / >=5 interval estimates / >=5 hypothesis tests / >=2 ANOVA / >=2 chi-square
-- **Statistical Validity (20 pts)**: p-value range, sample size, no fabricated data
+- **Statistical Validity (20 pts)**: p-value range (supports scientific notation: `3.7e-118`), sample size, no fabricated data
 - **Findings Compliance (20 pts)**: no causal errors, no vague expressions, correct citations
 - **Business Analysis Coverage (10 pts)**: whether business analysis modules are fully covered
 - **Suggestion Quality (10 pts)**: data-backed, actionable
@@ -298,7 +299,7 @@ Huginn/
 ### 2. Statistical Analysis Engine (`analysis/engine.py`)
 - **Dual mode**: `run_all()` full analysis + `run_tasks(tasks)` on-demand execution, unified entry
 - All statistical methods implemented based on scipy and statsmodels
-- **Auto-completion**: point/interval estimation covers all numeric columns, automatically fills in distribution tests and chi-square goodness-of-fit tests
+- **Auto-completion**: point/interval estimation covers all numeric columns, automatically fills in distribution tests, chi-square goodness-of-fit tests, and **ANOVA** (with smart fallback: uses `numeric_discrete` columns as grouping factors, or quartile-bins continuous variables when the dataset lacks multi-category categorical columns)
 - Built-in count self-check mechanism to ensure minimum statistical requirements are met
 - All results traceable, complete calculation process automatically saved
 
@@ -328,6 +329,7 @@ Huginn/
 - Strictly validates LLM-proposed questions, filters out non-executable tasks
 - Auto-supplements default tasks to ensure statistical count requirements; **auto-excludes sequence numbers, constant columns, and other fields unsuitable for analysis**
 - Sorts by priority (ANOVA > chi-square > t-test > others)
+- **Relaxed ANOVA validation**: accepts `numeric_discrete` columns (e.g., RAD 1-8) with ≥3 unique values as valid grouping factors, not just pure categorical columns
 - Built-in max iteration limit to prevent infinite loops when data types are insufficient
 - Detailed logging of why each question was filtered, for debugging
 
@@ -373,6 +375,7 @@ Huginn/
 - **Scoring weights**: statistical quantity (30 pts) + statistical validity (20 pts) + findings compliance (20 pts) + business coverage (10 pts) + suggestion quality (10 pts) + report completeness (10 pts)
 - 100-point scoring system, 60 points to pass
 - **Intelligent evidence checking**: accepts both hypothesis test (t/F/chi-squared + p-value) and descriptive statistics (mean/std/CV) evidence formats
+- **Scientific notation p-value parsing**: correctly interprets `p=3.7e-118` (as 3.7×10⁻¹¹⁸) rather than misreading it as p=3.7; also handles `p≈` and whitespace variants
 - **Intelligent vague word detection**: excludes words naturally contained in survey field names
 - **Business analysis coverage check**: verifies complete coverage of 4 retail business modules
 - Auto-checks limitations chapter in `final_report.md`
@@ -502,7 +505,7 @@ export LLM_MAX_ROUNDS=2   # Reduce to 2 rounds (task planning + report writing)
 A: `chart_generator.py` auto-searches and configures system Chinese fonts (macOS PingFang / Windows SimHei / Linux Noto CJK). If still ineffective, manually install Chinese fonts and retry.
 
 ### Q: Statistical counts don't meet requirements?
-A: The analysis engine auto-executes point and interval estimation on all numeric columns, and auto-fills distribution tests and chi-square goodness-of-fit. If still insufficient, check whether your data has enough numeric and categorical columns. Note: data with string-format Likert scales (e.g., `"5 (Very Interested)"`) is now intelligently recognized and converted to numeric.
+A: The analysis engine auto-executes point and interval estimation on all numeric columns, and auto-fills distribution tests, chi-square goodness-of-fit, and **ANOVA** (with smart fallback: uses `numeric_discrete` columns with ≥3 unique values as ANOVA grouping factors, or quartile-bins continuous variables when the dataset lacks multi-category categorical columns — e.g., Boston Housing with only binary CHAS). If still insufficient, check whether your data has enough numeric and categorical columns. Note: data with string-format Likert scales (e.g., `"5 (Very Interested)"`) is now intelligently recognized and converted to numeric.
 
 ### Q: Generated findings and suggestions are low quality?
 A: Optimize your requirement description with clearer business context; or adjust prompts in `llm/client.py`. Offline mode now dynamically generates findings and suggestions based on statistical results without relying on hardcoded demo data.
