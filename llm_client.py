@@ -615,6 +615,48 @@ class LLMClient:
             if row.get("stat_key")
         }
 
+    @staticmethod
+    def _count_significant_results(stats_results: Dict[str, Any]) -> int:
+        """统计所有 p < 0.05 的结果数量（用于 LLM 预扫描提示）。"""
+        count = 0
+
+        # 假设检验
+        for test in stats_results.get("hypothesis_tests", {}).get("tests", {}).values():
+            if isinstance(test, dict) and "p_value" in test:
+                p = test.get("p_value")
+                if isinstance(p, (int, float)) and p < 0.05:
+                    count += 1
+
+        # ANOVA
+        for test in stats_results.get("anova", {}).get("tests", {}).values():
+            if isinstance(test, dict) and "p_value" in test:
+                p = test.get("p_value")
+                if isinstance(p, (int, float)) and p < 0.05:
+                    count += 1
+
+        # 卡方检验
+        for test in stats_results.get("chi_square", {}).get("tests", {}).values():
+            if isinstance(test, dict) and "p_value" in test:
+                p = test.get("p_value")
+                if isinstance(p, (int, float)) and p < 0.05:
+                    count += 1
+
+        # 相关性分析
+        for test in stats_results.get("correlations", {}).values():
+            if isinstance(test, dict) and "p_value" in test:
+                p = test.get("p_value")
+                if isinstance(p, (int, float)) and p < 0.05:
+                    count += 1
+
+        # 分布检验
+        for test in stats_results.get("distribution_tests", {}).get("tests", {}).values():
+            if isinstance(test, dict) and "p_value" in test:
+                p = test.get("p_value")
+                if isinstance(p, (int, float)) and p < 0.05:
+                    count += 1
+
+        return count
+
     @classmethod
     def _normalize_finding_refs(
         cls,
@@ -825,14 +867,13 @@ class LLMClient:
             return self._load_offline_findings_suggestions(stats_results)
 
         sig_count = self._count_significant_results(stats_results)
-        evidence_block = self._build_evidence_block(evidence_table)
 
         # 问题上下文
         problems_context = ""
-        if problems:
+        if discovered_problems:
             problems_context = "\n".join(
-                f"- {p.problem}（建议角度: {p.suggested_angle}）"
-                for p in problems[:5]
+                f"- {p.title}（{p.description}）"
+                for p in discovered_problems[:5]
             )
             problems_context = f"\n【Round 2 发现的问题】\n{problems_context}\n"
 
@@ -847,7 +888,7 @@ class LLMClient:
 【数据画像】
 {json.dumps(data_profile, ensure_ascii=False, indent=2)[:2000]}
 
-【已执行任务数】{len(valid_tasks)}
+【已执行任务数】{len(executed_tasks)}
 
 【统计结果】
 预扫描发现 {sig_count} 个统计显著（p<0.05）的结果。

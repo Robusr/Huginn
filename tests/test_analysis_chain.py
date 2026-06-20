@@ -373,7 +373,7 @@ def test_validator_accepts_structured_evidence_refs(tmp_path):
     result = ReportValidator(str(tmp_path)).run_all_checks()
 
     assert result["checks"]["findings_compliance"]["score"] == 20
-    assert result["checks"]["suggestions_reasonableness"]["score"] == 10
+    assert result["checks"]["suggestions_quality"]["score"] == 10
 
 
 def test_validator_accepts_distinctive_feature_refs(tmp_path):
@@ -440,7 +440,7 @@ def test_validator_accepts_distinctive_feature_refs(tmp_path):
     result = ReportValidator(str(tmp_path)).run_all_checks()
 
     assert result["checks"]["findings_compliance"]["score"] == 20
-    assert result["checks"]["suggestions_reasonableness"]["score"] == 10
+    assert result["checks"]["suggestions_quality"]["score"] == 10
 
 
 def test_evidence_table_includes_point_estimation_keys():

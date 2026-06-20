@@ -98,6 +98,8 @@ class ReportValidator:
         self.granularity = self._load_optional_json("granularity.json")
         self.loss_driver = self._load_optional_json("loss_driver_results.json")
         self.discount_analysis = self._load_optional_json("discount_analysis_results.json")
+        self.pareto_analysis = self._load_optional_json("pareto_analysis_results.json")
+        self.cross_dimension = self._load_optional_json("cross_dimension_results.json")
 
     def _load_optional_json(self, filename: str) -> dict:
         path = self.run_dir / filename
@@ -562,11 +564,78 @@ class ReportValidator:
         check["score"] = max(0, check["score"])
 
     # ------------------------------
-    # 4. 行动建议合理性检查（10分）
+    # 4. 业务分析完整度检查（10分）
     # ------------------------------
-    def _check_suggestions_reasonableness(self) -> None:
+    def _check_business_analysis_completeness(self) -> None:
+        """检查业务分析模块是否完整覆盖（零售领域自动激活的模块）。"""
+        check = self.results["checks"]["business_analysis_completeness"]
+        check["score"] = 10  # 满分10分
+
+        # 检测领域类型
+        domain = self.data_profile.get("meta", {}).get("domain", "")
+        is_retail = domain == "retail_sales" or bool(self.loss_driver or self.discount_analysis)
+
+        if not is_retail:
+            check["details"].append({
+                "item": "业务分析模块",
+                "actual": f"当前领域({domain or '通用'})不需要业务分析模块",
+                "pass": True,
+                "note": "非零售领域跳过业务分析模块检查"
+            })
+            check["pass"] = True
+            return
+
+        # 零售领域：检查四大业务模块
+        expected_modules = {
+            "loss_driver": "亏损驱动分析",
+            "discount_analysis": "折扣响应分析",
+            "pareto_analysis": "集中度分析",
+            "cross_dimension": "交叉维度分析",
+        }
+
+        module_results = {
+            "loss_driver": self.loss_driver,
+            "discount_analysis": self.discount_analysis,
+            "pareto_analysis": self.pareto_analysis,
+            "cross_dimension": self.cross_dimension,
+        }
+
+        all_present = True
+        for key, label in expected_modules.items():
+            has_data = bool(module_results.get(key))
+            if has_data:
+                check["details"].append({
+                    "item": label,
+                    "actual": "已生成",
+                    "pass": True,
+                })
+            else:
+                check["details"].append({
+                    "item": label,
+                    "actual": "缺失",
+                    "required": "零售领域需包含此分析",
+                    "pass": False,
+                    "error": f"缺少{label}结果"
+                })
+                all_present = False
+                check["score"] -= 2
+
+        if all_present:
+            check["details"].append({
+                "item": "业务分析覆盖度",
+                "actual": "四大业务模块全部覆盖",
+                "pass": True,
+            })
+
+        check["pass"] = all_present
+        check["score"] = max(0, check["score"])
+
+    # ------------------------------
+    # 5. 行动建议合理性检查（10分）
+    # ------------------------------
+    def _check_suggestions_quality(self) -> None:
         """检查行动建议是否有数据依据、是否可落地"""
-        check = self.results["checks"]["suggestions_reasonableness"]
+        check = self.results["checks"]["suggestions_quality"]
         check["score"] = 10  # 满分10分
 
         if not self.suggestions:
@@ -633,9 +702,11 @@ class ReportValidator:
 
         # 3. 建议具体可落地（中文字数≥20且有具体措施的不算笼统）
         vague_suggestions = []
+        vague_phrases = ["加强", "改进", "提高", "优化", "完善"]
         for i, suggestion in enumerate(self.suggestions):
             sug_text = suggestion.get("suggestion", "")
             direction = suggestion.get("direction", "")
+            chinese_chars = len(sug_text)
             if self._is_vague_suggestion(sug_text, direction):
                 vague_suggestions.append(f"建议{i+1}: {sug_text}")
             elif chinese_chars < 40 and any(phrase in sug_text for phrase in vague_phrases):
@@ -674,7 +745,7 @@ class ReportValidator:
         return has_generic_verb and len(text) < 30 and len(detail) < 15
 
     # ------------------------------
-    # 5. 报告完整性检查（10分）
+    # 6. 报告完整性检查（10分）
     # ------------------------------
     def _check_report_completeness(self) -> None:
         """检查报告是否包含所有必要部分"""
@@ -801,7 +872,7 @@ class ReportValidator:
             )
 
         # 行动建议问题
-        if not self.results["checks"]["suggestions_reasonableness"]["pass"]:
+        if not self.results["checks"]["suggestions_quality"]["pass"]:
             suggestions.append(
                 " 行动建议不够合理：请确保每个建议都有对应的数据发现，"
                 "并补充具体的改进措施和预期效果"
@@ -871,11 +942,12 @@ class ReportValidator:
                 "statistical_quantity": "统计数量硬指标",
                 "statistical_validity": "统计结果有效性",
                 "findings_compliance": "数据发现合规性",
-                "suggestions_reasonableness": "行动建议合理性",
+                "suggestions_quality": "行动建议合理性",
+                "business_analysis_completeness": "业务分析完整度",
                 "report_completeness": "报告完整性"
             }[name]
             result_emoji = "Done" if check["pass"] else "Error"
-            lines.append(f"| {module_name} | {check['score']} | {max_score} | {result_emoji} |")
+            lines.append(f"| {module_name} | {check['score']} | {check['max_score']} | {result_emoji} |")
 
         lines.extend([
             "",
@@ -890,8 +962,9 @@ class ReportValidator:
                 "statistical_quantity": "2.1 统计数量硬指标（30分）",
                 "statistical_validity": "2.2 统计结果有效性（20分）",
                 "findings_compliance": "2.3 数据发现合规性（20分）",
-                "suggestions_reasonableness": "2.4 行动建议合理性（10分）",
-                "report_completeness": "2.5 报告完整性（10分）"
+                "suggestions_quality": "2.4 行动建议合理性（10分）",
+                "business_analysis_completeness": "2.5 业务分析完整度（10分）",
+                "report_completeness": "2.6 报告完整性（10分）"
             }[name]
             lines.append(f"### {module_name}")
             lines.append("")
