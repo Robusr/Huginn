@@ -35,6 +35,7 @@ class ReportGenerator:
         {"id": "4", "title": "主要发现", "level": 1},
         {"id": "5", "title": "行动建议", "level": 1},
         {"id": "6", "title": "局限性与验证摘要", "level": 1},
+        {"id": "7", "title": "附录：数据预处理与分析方法", "level": 1},
     ]
 
     CHART_LABELS = {
@@ -463,6 +464,11 @@ class ReportGenerator:
                 "heading": "六、局限性与验证摘要",
                 "blocks": self._section_limitations(),
             },
+            {
+                "id": "7",
+                "heading": "附录：数据预处理与分析方法",
+                "blocks": self._section_appendix(),
+            },
         ]
         self.sections_cache = sections
         return sections
@@ -827,23 +833,17 @@ class ReportGenerator:
         duplicate_rows = overview.get("duplicate_rows", 0)
         missing_pct = meta.get("total_missing_pct", 0)
 
-        narrative_overview = self.report_narrative.get("overview_paragraphs") or []
-        intro = (
-            f"本次分析使用 {meta.get('n_rows', '?')} 条记录和 {meta.get('n_columns', '?')} 个观察字段。"
-            f"整体缺失率为 {missing_pct:.2f}%，重复记录数为 {duplicate_rows}。"
-        )
-        focus_text = "结合统计任务与图表，本报告重点关注核心数值指标、可解释分组及其差异和关联。"
-
-        field_desc = []
+        focus_fields_text = ""
         if self.focus_fields:
-            field_desc.append("本次重点字段包括：" + "、".join(self.focus_fields[:8]) + "。")
+            focus_fields_text = "重点关注字段包括：" + "、".join(self.focus_fields[:6]) + "。"
 
-        distribution_parts = self._dataset_distribution_brief()
-
-        base_paragraphs = narrative_overview or [intro, focus_text]
-        blocks = [{"type": "paragraph", "text": paragraph} for paragraph in base_paragraphs]
-        blocks.extend({"type": "paragraph", "text": item} for item in field_desc + distribution_parts)
-        return blocks
+        intro = (
+            f"本次分析基于 {meta.get('n_rows', '?')} 条记录、{meta.get('n_columns', '?')} 个字段，"
+            f"整体缺失率为 {missing_pct:.2f}%，重复记录 {duplicate_rows} 条。"
+            f"{focus_fields_text}"
+            "详细的字段类型分布、数据清洗步骤及统计方法说明请参见附录。"
+        )
+        return [{"type": "paragraph", "text": intro}]
 
     def _section_chart_analysis(self) -> List[Dict[str, Any]]:
         blocks: List[Dict[str, Any]] = [
@@ -950,6 +950,135 @@ class ReportGenerator:
         if improvements:
             polished = [self._polish_validation_suggestion(item) for item in improvements[:4]]
             blocks.append({"type": "bullets", "items": polished})
+        return blocks
+
+    def _section_appendix(self) -> List[Dict[str, Any]]:
+        """附录：数据预处理与分析方法 — 承载详细的技术细节。"""
+        meta = self.data_profile.get("meta", {})
+        overview = self.data_profile.get("overview", {})
+        field_type_counts = overview.get("field_type_counts", {})
+        fields = self.data_profile.get("fields", [])
+
+        blocks: List[Dict[str, Any]] = [
+            {"type": "paragraph", "text": "本附录记录数据预处理过程、字段类型分布及统计分析方法，供复核和审计使用。"},
+        ]
+
+        # 确定小节编号起点
+        sub_idx = 0
+
+        # ---- 7.X 数据概览补充 ----
+        narrative_overview = self.report_narrative.get("overview_paragraphs") or []
+        if narrative_overview:
+            sub_idx += 1
+            blocks.append({"type": "heading2", "text": f"7.{sub_idx} 数据概览补充"})
+            for para in narrative_overview:
+                blocks.append({"type": "paragraph", "text": para})
+
+        # ---- 7.X 数据预处理 ----
+        sub_idx += 1
+        blocks.append({"type": "heading2", "text": f"7.{sub_idx} 数据预处理"})
+        encoding = meta.get("encoding", "自动检测")
+        file_format = meta.get("file_format", "CSV/Excel")
+        n_rows_raw = meta.get("n_rows_raw", meta.get("n_rows", "?"))
+        n_rows = meta.get("n_rows", "?")
+
+        preprocessing_items = [
+            f"输入格式：{file_format}，编码：{encoding}，原始记录数：{n_rows_raw}。",
+            "自动检测并清洗表头空行、尾部空行及全空列。",
+            "智能数值提取：自动识别 Likert 量表字符串（如\"5（非常感兴趣）\"）、含单位数值（如\"10小时\"）并转换为数值。",
+            "自动推断字段类型：根据唯一值占比、基数、数据类型区分连续数值 / 离散数值 / 分类 / 日期时间 / 文本。",
+            f"清洗后有效记录：{n_rows} 条，有效字段：{meta.get('n_columns', '?')} 个。",
+        ]
+        if meta.get("total_missing_pct", 0) > 0:
+            preprocessing_items.append(f"整体缺失率：{meta.get('total_missing_pct', 0):.2f}%，缺失值在统计计算中按方法要求处理。")
+        else:
+            preprocessing_items.append("未检测到缺失值。")
+        blocks.append({"type": "bullets", "items": preprocessing_items})
+
+        # ---- 7.X 字段类型分布 ----
+        sub_idx += 1
+        blocks.append({"type": "heading2", "text": f"7.{sub_idx} 字段类型分布"})
+        if field_type_counts:
+            type_labels = Config.TYPE_LABELS
+            type_items = [
+                f"{type_labels.get(k, k)}：{v} 个"
+                for k, v in field_type_counts.items()
+            ]
+            blocks.append({"type": "bullets", "items": type_items})
+        else:
+            type_items = []
+            for field in fields:
+                col = field.get("column", "")
+                ftype = field.get("inferred_type", "未知")
+                unique = field.get("unique", "?")
+                missing = field.get("missing", 0)
+                type_items.append(
+                    f"{self._label(col)}：{ftype}，唯一值 {unique}，缺失 {missing}"
+                )
+            blocks.append({"type": "bullets", "items": type_items[:15]})
+
+        # ---- 7.X 统计方法说明 ----
+        sub_idx += 1
+        blocks.append({"type": "heading2", "text": f"7.{sub_idx} 统计方法说明"})
+        point_count = len(self.stats_results.get("point_estimation", {}).get("fields", {}))
+        interval_count = len(self.stats_results.get("interval_estimation", {}).get("fields", {}))
+        ht_count = len(self.stats_results.get("hypothesis_tests", {}).get("tests", {}))
+        anova_count = len(self.stats_results.get("anova", {}).get("tests", {}))
+        chi_count = len(self.stats_results.get("chi_square_goodness_of_fit", {}).get("tests", {}))
+        corr_count = len(self.stats_results.get("correlations", {}))
+
+        method_items = [
+            f"点估计（均值、方差、标准差、中位数等 10 个参数）：覆盖 {point_count} 个数值字段。",
+            f"区间估计（95% 置信区间）：覆盖 {interval_count} 个数值字段。",
+            f"假设检验（t 检验、配对 t 检验、Wilcoxon、Mann-Whitney 等）：共 {ht_count} 项。",
+            f"方差分析（单因素/双因素 ANOVA + Tukey 事后检验）：共 {anova_count} 项。",
+            f"卡方检验（拟合优度 + 独立性检验）：共 {chi_count} 项。",
+            f"相关性分析（Pearson 相关系数 + t 检验）：共 {corr_count} 组。",
+            "显著性阈值：α = 0.05，p < 0.05 视为统计显著。",
+            "所有统计量由 Python (scipy / statsmodels) 实际计算，LLM 仅负责解释和报告撰写。",
+        ]
+        blocks.append({"type": "bullets", "items": method_items})
+
+        # ---- 7.X 数据质量备注 ----
+        sub_idx += 1
+        blocks.append({"type": "heading2", "text": f"7.{sub_idx} 数据质量备注"})
+        quality_items: List[str] = []
+        # Check for date issues from findings
+        for finding in self.findings:
+            conclusion = finding.get("conclusion", "")
+            if "日期" in conclusion or "时间" in conclusion or "异常" in conclusion:
+                quality_items.append(f"日期/时间字段：{self._short_heading(conclusion, 60)}")
+                break
+        dup_rows = overview.get("duplicate_rows", 0)
+        if dup_rows > 0:
+            quality_items.append(f"重复记录：{dup_rows} 条。")
+        missing_pct = meta.get("total_missing_pct", 0)
+        if missing_pct > 0:
+            quality_items.append(f"整体缺失率：{missing_pct:.2f}%。")
+        # Distribution notes
+        for field in fields[:8]:
+            if field.get("inferred_type") == "numeric_continuous":
+                stats = field.get("stats", {})
+                skew = stats.get("skewness")
+                if skew is not None and abs(skew) > 1:
+                    quality_items.append(
+                        f"{self._label(field.get('column', ''))} 偏度 = {skew:.2f}，呈{'右偏' if skew > 0 else '左偏'}分布。"
+                    )
+        if not quality_items:
+            quality_items.append("当前数据未发现明显质量问题。")
+        blocks.append({"type": "bullets", "items": quality_items[:8]})
+
+        # ---- 7.X 分析任务清单 ----
+        if self.valid_tasks:
+            sub_idx += 1
+            blocks.append({"type": "heading2", "text": f"7.{sub_idx} 已执行分析任务"})
+            task_items: List[str] = []
+            for task in self.valid_tasks[:12]:
+                question = task.get("question", task.get("description", ""))
+                method = task.get("method", "")
+                task_items.append(f"{self._short_heading(question, 50)}（{method}）")
+            blocks.append({"type": "numbered", "items": task_items})
+
         return blocks
 
     # ==================================================================
@@ -1248,6 +1377,7 @@ class ReportGenerator:
             "4": findings_start,
             "5": suggestions_start,
             "6": suggestions_start + suggestions_pages,
+            "7": suggestions_start + suggestions_pages + 1,
         }
 
     def _render_static_toc_lines(self) -> List[str]:
