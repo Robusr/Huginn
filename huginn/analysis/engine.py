@@ -115,9 +115,10 @@ class AnalysisEngine:
             self.results["point_estimation"] = self._run_point_estimation(numeric_cols)
             self.results["interval_estimation"] = self._run_interval_estimation(numeric_cols)
 
-        # 1.5 自动补充分布检验和卡方拟合优度（保证验证达标）
+        # 1.5 自动补充分布检验、卡方拟合优度和ANOVA（保证验证达标）
         self._auto_fill_distribution_tests(all_numeric_cols)
         self._auto_fill_chi_square_gof()
+        self._auto_fill_anova()
 
         # 2. 按调度表逐个执行任务
         for task in tasks:
@@ -809,8 +810,14 @@ class AnalysisEngine:
                 s = self.df[col].dropna()
                 if len(s) < 20:
                     continue
+                # 跳过低基数数值列：唯一值少于4的列无法有效分箱
+                if s.nunique() < 4:
+                    continue
                 try:
                     bins = pd.qcut(s, q=4, duplicates="drop")
+                    # 分箱后若仅剩1个区间，跳过（df=0 会导致 p=nan）
+                    if bins.nunique() < 2:
+                        continue
                     observed = bins.value_counts().values.astype(np.float64)
                     n_total = observed.sum()
                     expected = np.full_like(observed, n_total / len(observed), dtype=np.float64)
@@ -887,6 +894,123 @@ class AnalysisEngine:
                 count += 1
             except Exception:
                 pass
+
+    def _auto_fill_anova(self) -> None:
+        """自动补充 ANOVA 分析（若任务未覆盖足够数量）。
+
+        当数据集中缺乏多分类（≥3组）的纯分类变量时，引擎会：
+        1. 优先使用 numeric_discrete 列（如 RAD 1-8）作为分组因子；
+        2. 若无合适离散列，对连续数值列按四分位数分箱后执行 ANOVA。
+        确保最终 ANOVA 数量 ≥ 2。
+        """
+        existing = self.results.get("anova", {}).get("tests", {})
+        anova_count = self._count_valid_stat_results(existing)
+        if anova_count >= Config.REQUIREMENTS["anova_min"]:
+            return
+
+        # 收集可用的数值列（自动填充不使用 _is_noise_column 过滤，
+        # 因为其 95% 唯一值比率阈值会误伤高基数连续数值列）
+        numeric_cols = self._numeric_columns()
+        if not numeric_cols:
+            return
+
+        # 候选分组列：优先多分类变量，其次 numeric_discrete（≥3 唯一值），最后分箱
+        categorical_cols = self._categorical_columns(min_groups=3, max_groups=Config.ANALYSIS_MAX_GROUPS)
+
+        # 扩展：将 numeric_discrete 中 3–ANALYSIS_MAX_GROUPS 唯一值的列也纳入分组候选
+        numeric_discrete_candidates: list[str] = []
+        for c in numeric_cols:
+            if c in categorical_cols:
+                continue
+            n_unique = self.df[c].dropna().nunique()
+            if 3 <= n_unique <= Config.ANALYSIS_MAX_GROUPS:
+                numeric_discrete_candidates.append(c)
+
+        grouping_candidates = categorical_cols + numeric_discrete_candidates
+
+        # 策略1：使用真实分组列
+        for g_col in grouping_candidates:
+            if anova_count >= Config.REQUIREMENTS["anova_min"]:
+                break
+            for y_col in numeric_cols:
+                if anova_count >= Config.REQUIREMENTS["anova_min"]:
+                    break
+                if g_col == y_col:
+                    continue
+                # 跳过已经存在的 ANOVA
+                test_key = f"auto_anova_{anova_count + 1}"
+                skip = False
+                for ek, ev in existing.items():
+                    if isinstance(ev, dict) and ev.get("dependent") == y_col and ev.get("factor") == g_col:
+                        skip = True
+                        break
+                if skip:
+                    continue
+                try:
+                    clean = self.df[[y_col, g_col]].dropna()
+                    groups_list = [g.dropna() for _, g in clean.groupby(g_col)[y_col]]
+                    groups_list = [g for g in groups_list if len(g) >= 3]
+                    if len(groups_list) < 3:
+                        continue
+                    f_stat, p_val = scipy_stats.f_oneway(*groups_list)
+                    anova_result = {
+                        "method": "单因素方差分析（自动补充）",
+                        "dependent": y_col,
+                        "factor": g_col,
+                        "n_groups": len(groups_list),
+                        "F_statistic": round(float(f_stat), 6),
+                        "p_value": round(float(p_val), 6),
+                        "significant": bool(p_val < self.alpha),
+                    }
+                    self.results["anova"]["tests"][test_key] = anova_result
+                    anova_count += 1
+                except Exception:
+                    continue
+
+        # 策略2：若仍不足，对连续数值列按四分位数分箱后执行 ANOVA
+        bin_candidates = [c for c in numeric_cols if self.df[c].dropna().nunique() >= 10]
+        for y_col in numeric_cols:
+            if anova_count >= Config.REQUIREMENTS["anova_min"]:
+                break
+            for b_col in bin_candidates:
+                if anova_count >= Config.REQUIREMENTS["anova_min"]:
+                    break
+                if b_col == y_col:
+                    continue
+                test_key = f"auto_anova_binned_{anova_count + 1}"
+                skip = False
+                for ek, ev in existing.items():
+                    if isinstance(ev, dict) and ev.get("dependent") == y_col and ev.get("factor", "").startswith(f"{b_col}_binned"):
+                        skip = True
+                        break
+                if skip:
+                    continue
+                try:
+                    s = self.df[b_col].dropna()
+                    bins = pd.qcut(s, q=min(4, s.nunique()), duplicates="drop")
+                    if bins.nunique() < 3:
+                        continue
+                    # 对齐索引：bins 仅包含 b_col 非缺失行，y_col 需取相同行
+                    common_idx = bins.index
+                    clean = pd.DataFrame({y_col: self.df.loc[common_idx, y_col], "bin": bins}).dropna()
+                    groups_list = [g.dropna() for _, g in clean.groupby("bin")[y_col]]
+                    groups_list = [g for g in groups_list if len(g) >= 3]
+                    if len(groups_list) < 3:
+                        continue
+                    f_stat, p_val = scipy_stats.f_oneway(*groups_list)
+                    anova_result = {
+                        "method": "单因素方差分析（四分位数分箱自动补充）",
+                        "dependent": y_col,
+                        "factor": f"{b_col}_binned",
+                        "n_groups": len(groups_list),
+                        "F_statistic": round(float(f_stat), 6),
+                        "p_value": round(float(p_val), 6),
+                        "significant": bool(p_val < self.alpha),
+                    }
+                    self.results["anova"]["tests"][test_key] = anova_result
+                    anova_count += 1
+                except Exception:
+                    continue
 
     # ==================================================================
     # 8. 数量自查
