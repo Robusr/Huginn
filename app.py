@@ -91,8 +91,8 @@ def load_run_results(run_dir: Path) -> dict:
 # ==================================================================
 
 def main():
-    st.title(f"📊 课程问卷分析智能体 Huginn {Config.APP_VERSION}")
-    st.markdown("> **全自动数据分析**：上传 Excel/CSV 表格，自动完成统计分析和报告生成")
+    st.title(f"📊 数据分析智能体 Huginn {Config.APP_VERSION}")
+    st.markdown("> **全自动数据分析**：上传 Excel/CSV 表格，自动完成统计分析、业务诊断和报告生成")
 
     # ── 侧边栏 ────────────────────────────────────────────────
     with st.sidebar:
@@ -101,7 +101,7 @@ def main():
         uploaded_file = st.file_uploader(
             "📁 上传数据文件",
             type=["csv", "xlsx"],
-            help="支持 .csv 和 .xlsx 格式的课程问卷数据",
+            help="支持 .csv 和 .xlsx 格式的数据文件",
         )
 
         user_requirement = st.text_area(
@@ -234,7 +234,7 @@ def main():
 
                     st.metric("执行任务", f"{len(valid_tasks)} 项")
                     st.metric("数据发现", f"{len(findings)} 条")
-                    st.metric("课程建议", f"{len(suggestions)} 条")
+                    st.metric("改进建议", f"{len(suggestions)} 条")
                     st.metric("验证得分", f"{val_score}/100")
 
                 st.divider()
@@ -354,14 +354,14 @@ def main():
         with tabs[4]:
             suggestions = results.get("suggestions", [])
             if suggestions:
-                st.subheader(f"课程改进建议（{len(suggestions)} 条）")
+                st.subheader(f"改进建议（{len(suggestions)} 条）")
                 for i, s in enumerate(suggestions, 1):
                     with st.container(border=True):
                         st.markdown(f"### 建议 {i}：{s.get('suggestion', '')}")
                         st.markdown(f"**数据依据**: {s.get('evidence', '')}")
                         st.markdown(f"**改进方向**: {s.get('direction', '')}")
             else:
-                st.info("未生成课程建议")
+                st.info("未生成改进建议")
 
         # ── Tab 6: 验证 ──────────────────────────────────
         with tabs[5]:
