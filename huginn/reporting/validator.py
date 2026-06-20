@@ -165,11 +165,28 @@ class ReportValidator:
 
     @staticmethod
     def _item_stat_keys(item: Dict[str, Any], valid_stat_keys: Any) -> List[str]:
+        """返回 source_stat_keys 中能在有效统计键集合里匹配的键。
+
+        支持层级前缀匹配：distribution_tests.CRIM 可匹配
+        distribution_tests.CRIM.shapiro_wilk 等子键。
+        """
         valid = set(valid_stat_keys)
         refs = item.get("source_stat_keys") or []
         if isinstance(refs, str):
             refs = [refs]
-        return [str(ref) for ref in refs if str(ref) in valid]
+        result: List[str] = []
+        for ref in refs:
+            sref = str(ref)
+            if sref in valid:
+                result.append(sref)
+            else:
+                # 前缀匹配：distribution_tests.CRIM → distribution_tests.CRIM.*
+                prefix = sref + "."
+                for k in valid:
+                    if k.startswith(prefix):
+                        result.append(sref)
+                        break
+        return result
 
     # ------------------------------
     # 1. 统计数量硬指标检查（40分）
@@ -356,7 +373,10 @@ class ReportValidator:
             evidence = finding.get("evidence", "")
             conclusion = finding.get("conclusion", "")
             explicitly_non_significant = any(
-                phrase in conclusion for phrase in ["不显著", "无显著", "未达显著", "未达到显著", "未达统计显著"]
+                phrase in conclusion for phrase in [
+                    "不显著", "无显著", "未达显著", "未达到显著", "未达统计显著",
+                    "未检测到显著", "未见显著", "没有显著", "无明显差异", "无统计学意义",
+                ]
             )
             # 提取证据中的p值（支持科学记数法：p=3.7e-118, p≈1.0e-55, p = 0.003）
             p_match = re.search(r"p\s*[=≈]\s*([\d\.]+(?:[eE][+-]?\d+)?)", evidence)
@@ -500,13 +520,17 @@ class ReportValidator:
             })
             check["score"] -= 5
 
-        # 3. 没有因果关系错误
+        # 3. 没有因果关系错误（数据质量/样本量上下文允许"导致"等词）
         causal_errors = []
+        data_quality_context_keywords = ["缺失值", "缺失", "样本量", "有效样本", "数据质量"]
         for i, finding in enumerate(self.findings):
             conclusion = finding.get("conclusion", "")
+            is_data_quality_context = any(kw in conclusion for kw in data_quality_context_keywords)
             for word in self.CAUSAL_WORDS:
                 if word in conclusion:
                     if word == "影响" and "极端值" in conclusion:
+                        continue
+                    if is_data_quality_context and word in ["导致", "造成", "使得", "引起"]:
                         continue
                     causal_errors.append(f"发现{i+1}: 使用了因果词汇'{word}'")
                     break
