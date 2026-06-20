@@ -15,14 +15,19 @@ import json
 from typing import Any, Dict, List
 from llm_client import CandidateQuestion
 from config import Config
+from domain_context import detect_domain_context, domain_keywords, is_identifier_or_noise
+from label_utils import humanize_column_name
 from logger import get_logger
 
 logger = get_logger(__name__)
 
 
 class TaskPlanner:
-    def __init__(self, data_profile: Dict):
+    NOISE_KEYWORDS = ["序号", "提交答卷时间", "所用时间", "来源", "来源详情"]
+
+    def __init__(self, data_profile: Dict, domain_context: Dict | None = None):
         self.data_profile = data_profile
+        self.domain_context = domain_context or detect_domain_context(data_profile)
         self.column_info = {f["column"]: f for f in data_profile["fields"]}
         # 统计方法与验证函数映射
         self.valid_methods = {
@@ -69,6 +74,10 @@ class TaskPlanner:
                 "method": q.method,
                 "value": q.value
             }
+            if getattr(q, "task_pool_id", None):
+                task["task_pool_id"] = q.task_pool_id
+            if getattr(q, "variable_ids", None):
+                task["variable_ids"] = q.variable_ids
             valid_tasks.append(task)
 
         # 记录无效问题原因（便于调试）
@@ -138,6 +147,8 @@ class TaskPlanner:
         cat_info = self.column_info[cat_var]
         if cat_info["inferred_type"] != "categorical" or cat_info["unique"] < 3:
             return False, f"变量{cat_var}不是多分类变量（需要至少3个类别）"
+        if cat_info["unique"] > Config.ANALYSIS_MAX_GROUPS:
+            return False, f"变量{cat_var}类别数过多（最多{Config.ANALYSIS_MAX_GROUPS}个类别）"
 
         return True, ""
 
@@ -151,6 +162,8 @@ class TaskPlanner:
                 return False, f"变量{v}不是分类型变量"
             if self.column_info[v]["unique"] < 2:
                 return False, f"变量{v}的类别数不足2个"
+            if self.column_info[v]["unique"] > Config.ANALYSIS_MAX_GROUPS:
+                return False, f"变量{v}类别数过多（最多{Config.ANALYSIS_MAX_GROUPS}个类别）"
 
         return True, ""
 
@@ -182,10 +195,8 @@ class TaskPlanner:
     def _generate_default_tasks(self) -> List[Dict]:
         """当有效任务不足时，自动生成默认的基础分析任务"""
         default_tasks = []
-        numeric_cols = [f["column"] for f in self.data_profile["fields"]
-                        if f["inferred_type"].startswith("numeric")]
-        categorical_cols = [f["column"] for f in self.data_profile["fields"]
-                            if f["inferred_type"] == "categorical"]
+        numeric_cols = self._numeric_columns_for_defaults()
+        categorical_cols = self._categorical_columns_for_defaults()
         binary_cats = [c for c in categorical_cols if self.column_info[c]["unique"] == 2]
         multi_cats = [c for c in categorical_cols if self.column_info[c]["unique"] >= 3]
 
@@ -193,7 +204,7 @@ class TaskPlanner:
         if len(multi_cats) >= 1 and len(numeric_cols) >= 1:
             default_tasks.append({
                 "task_id": 100,
-                "question": f"不同{multi_cats[0]}的学生在{numeric_cols[0]}上是否存在显著差异？",
+                "question": f"不同{self._label(multi_cats[0])}分组的“{self._label(numeric_cols[0])}”是否存在显著差异？",
                 "variables": [numeric_cols[0], multi_cats[0]],
                 "method": "ANOVA",
                 "value": "了解不同群体的差异"
@@ -203,7 +214,7 @@ class TaskPlanner:
         if len(categorical_cols) >= 2:
             default_tasks.append({
                 "task_id": 101,
-                "question": f"{categorical_cols[0]}与{categorical_cols[1]}是否存在显著关联？",
+                "question": f"{self._label(categorical_cols[0])}与{self._label(categorical_cols[1])}是否存在显著关联？",
                 "variables": [categorical_cols[0], categorical_cols[1]],
                 "method": "卡方检验",
                 "value": "了解分类变量间的关联"
@@ -213,7 +224,7 @@ class TaskPlanner:
         if len(binary_cats) >= 1 and len(numeric_cols) >= 1:
             default_tasks.append({
                 "task_id": 102,
-                "question": f"不同{binary_cats[0]}的学生在{numeric_cols[0]}上是否存在显著差异？",
+                "question": f"两个{self._label(binary_cats[0])}分组的“{self._label(numeric_cols[0])}”均值是否存在显著差异？",
                 "variables": [numeric_cols[0], binary_cats[0]],
                 "method": "t检验",
                 "value": "了解二分类群体的差异"
@@ -223,7 +234,7 @@ class TaskPlanner:
         if len(numeric_cols) >= 1:
             default_tasks.append({
                 "task_id": 103,
-                "question": f"{numeric_cols[0]}的分布是否符合正态分布？",
+                "question": f"“{self._label(numeric_cols[0])}”的分布是否符合正态分布？",
                 "variables": [numeric_cols[0]],
                 "method": "分布检验",
                 "value": "了解数据分布特征"
@@ -232,23 +243,22 @@ class TaskPlanner:
         return default_tasks
 
     def _ensure_minimum_requirements(self, tasks: List[Dict]) -> List[Dict]:
-        """确保满足课程作业的最低统计要求：≥2ANOVA、≥2卡方、≥3t检验"""
+        """按配置补足最低统计方法覆盖要求。"""
         anova_count = sum(1 for t in tasks if t["method"] == "ANOVA")
         chi_count = sum(1 for t in tasks if t["method"] == "卡方检验")
         t_count = sum(1 for t in tasks if t["method"] in ["t检验", "配对t检验"])
 
         # 补充ANOVA到最低要求
         while anova_count < Config.TASK_MIN_REQUIREMENTS["ANOVA"]:
-            multi_cats = [c for c in self.column_info
-                          if self.column_info[c]["inferred_type"] == "categorical"
-                          and self.column_info[c]["unique"] >= 3]
-            numeric_cols = [c for c in self.column_info
-                            if self.column_info[c]["inferred_type"].startswith("numeric")]
-            if len(multi_cats) >= 2 and len(numeric_cols) >= 1:
+            multi_cats = [c for c in self._categorical_columns_for_defaults() if self.column_info[c]["unique"] >= 3]
+            numeric_cols = self._numeric_columns_for_defaults()
+            pair = self._first_missing_pair(tasks, "ANOVA", numeric_cols, multi_cats)
+            if pair:
+                num_col, cat_col = pair
                 tasks.append({
-                    "task_id": 200 + anova_count,
-                    "question": f"不同{multi_cats[1]}的学生在{numeric_cols[0]}上是否存在显著差异？",
-                    "variables": [numeric_cols[0], multi_cats[1]],
+                    "task_id": self._next_task_id(tasks, 200),
+                    "question": f"不同{self._label(cat_col)}分组的“{self._label(num_col)}”是否存在显著差异？",
+                    "variables": [num_col, cat_col],
                     "method": "ANOVA",
                     "value": "补充ANOVA任务以满足要求"
                 })
@@ -258,13 +268,14 @@ class TaskPlanner:
 
         # 补充卡方到最低要求
         while chi_count < Config.TASK_MIN_REQUIREMENTS["chi_square"]:
-            categorical_cols = [c for c in self.column_info
-                                if self.column_info[c]["inferred_type"] == "categorical"]
-            if len(categorical_cols) >= 3:
+            categorical_cols = self._categorical_columns_for_defaults()
+            pair = self._first_missing_categorical_pair(tasks, categorical_cols)
+            if pair:
+                left, right = pair
                 tasks.append({
-                    "task_id": 210 + chi_count,
-                    "question": f"{categorical_cols[1]}与{categorical_cols[2]}是否存在显著关联？",
-                    "variables": [categorical_cols[1], categorical_cols[2]],
+                    "task_id": self._next_task_id(tasks, 210),
+                    "question": f"{self._label(left)}与{self._label(right)}是否存在显著关联？",
+                    "variables": [left, right],
                     "method": "卡方检验",
                     "value": "补充卡方检验任务以满足要求"
                 })
@@ -274,16 +285,15 @@ class TaskPlanner:
 
         # 补充t检验到最低要求
         while t_count < Config.TASK_MIN_REQUIREMENTS["t_test"]:
-            binary_cats = [c for c in self.column_info
-                           if self.column_info[c]["inferred_type"] == "categorical"
-                           and self.column_info[c]["unique"] == 2]
-            numeric_cols = [c for c in self.column_info
-                            if self.column_info[c]["inferred_type"].startswith("numeric")]
-            if len(binary_cats) >= 1 and len(numeric_cols) >= 2:
+            binary_cats = [c for c in self._categorical_columns_for_defaults() if self.column_info[c]["unique"] == 2]
+            numeric_cols = self._numeric_columns_for_defaults()
+            pair = self._first_missing_pair(tasks, "t检验", numeric_cols, binary_cats)
+            if pair:
+                num_col, cat_col = pair
                 tasks.append({
-                    "task_id": 220 + t_count,
-                    "question": f"不同{binary_cats[0]}的学生在{numeric_cols[1]}上是否存在显著差异？",
-                    "variables": [numeric_cols[1], binary_cats[0]],
+                    "task_id": self._next_task_id(tasks, 220),
+                    "question": f"两个{self._label(cat_col)}分组的“{self._label(num_col)}”均值是否存在显著差异？",
+                    "variables": [num_col, cat_col],
                     "method": "t检验",
                     "value": "补充t检验任务以满足要求"
                 })
@@ -292,3 +302,74 @@ class TaskPlanner:
                 break
 
         return tasks
+
+    def _numeric_columns_for_defaults(self) -> List[str]:
+        cols = [
+            c for c, info in self.column_info.items()
+            if info.get("inferred_type", "").startswith("numeric") and not self._is_noise_column(c, info)
+        ]
+        return self._sort_by_keywords(cols, domain_keywords(self.domain_context, "metric_keywords"))
+
+    def _categorical_columns_for_defaults(self) -> List[str]:
+        cols = [
+            c for c, info in self.column_info.items()
+            if info.get("inferred_type") == "categorical"
+            and 2 <= info.get("unique", 0) <= Config.ANALYSIS_MAX_GROUPS
+            and not self._is_noise_column(c, info)
+        ]
+        return self._sort_by_keywords(cols, domain_keywords(self.domain_context, "group_keywords"))
+
+    def _is_noise_column(self, column: str, info: Dict | None = None) -> bool:
+        n_rows = int(self.data_profile.get("meta", {}).get("n_rows") or 0)
+        return is_identifier_or_noise(column, info, n_rows)
+
+    @staticmethod
+    def _sort_by_keywords(cols: List[str], keywords: List[str]) -> List[str]:
+        def rank(col: str) -> tuple[int, int]:
+            text = str(col)
+            for index, keyword in enumerate(keywords):
+                if keyword in text:
+                    return index, 0
+            return len(keywords), 0
+        return sorted(cols, key=rank)
+
+    def _first_missing_pair(
+        self,
+        tasks: List[Dict],
+        method: str,
+        numeric_cols: List[str],
+        categorical_cols: List[str],
+    ) -> tuple[str, str] | None:
+        for num_col in numeric_cols:
+            for cat_col in categorical_cols:
+                if not self._task_exists(tasks, method, [num_col, cat_col]):
+                    return num_col, cat_col
+        return None
+
+    def _first_missing_categorical_pair(self, tasks: List[Dict], categorical_cols: List[str]) -> tuple[str, str] | None:
+        for left_idx, left in enumerate(categorical_cols):
+            for right in categorical_cols[left_idx + 1:]:
+                if not self._task_exists(tasks, "卡方检验", [left, right]):
+                    return left, right
+        return None
+
+    @staticmethod
+    def _task_exists(tasks: List[Dict], method: str, variables: List[str]) -> bool:
+        wanted = tuple(variables)
+        wanted_set = set(variables)
+        for task in tasks:
+            if task.get("method") != method:
+                continue
+            current = task.get("variables", [])
+            if tuple(current) == wanted or set(current) == wanted_set:
+                return True
+        return False
+
+    @staticmethod
+    def _next_task_id(tasks: List[Dict], fallback: int) -> int:
+        existing = [task.get("task_id") for task in tasks if isinstance(task.get("task_id"), int)]
+        return max(existing, default=fallback - 1) + 1
+
+    @staticmethod
+    def _label(column: str) -> str:
+        return humanize_column_name(column)

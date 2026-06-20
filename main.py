@@ -70,7 +70,7 @@ def main(file_path: str) -> None:
 
     # ── [4/5] 可视化 ────────────────────────────────────────────
     print("\n[4/5] 生成可视化图表...")
-    charts = generate_charts(df, output_dir=str(chart_dir))
+    charts = generate_charts(df, output_dir=str(chart_dir), stats_results=stats)
     for p in charts:
         print(f"      {p}")
     if not charts:

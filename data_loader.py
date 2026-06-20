@@ -253,13 +253,31 @@ class DataLoader:
         推断并转换数据类型：
         - 看起来是数值的 object 列 → numeric
         - 看起来是日期时间的 object 列 → datetime
+        - Likert 量表等以数字开头的标签 → numeric
         """
         df = df.copy()
         for col in df.columns:
-            if df[col].dtype != "object":
+            if not (
+                pd.api.types.is_object_dtype(df[col])
+                or pd.api.types.is_string_dtype(df[col])
+            ):
                 continue
             series = df[col].dropna()
             if len(series) == 0:
+                continue
+
+            # 优先处理 "5（非常感兴趣）" 这类以数字开头的量表标签
+            numeric_prefix = series.astype(str).str.extract(
+                r"^\s*([+-]?\d+(?:\.\d+)?)\s*(?:[（(].*)?$"
+            )[0]
+            prefix_valid_ratio = numeric_prefix.notna().sum() / len(series)
+            if prefix_valid_ratio >= 0.85:
+                df[col] = pd.to_numeric(
+                    df[col].astype(str).str.extract(
+                        r"^\s*([+-]?\d+(?:\.\d+)?)"
+                    )[0],
+                    errors="coerce",
+                )
                 continue
 
             # 尝试转数值
@@ -270,10 +288,10 @@ class DataLoader:
                 continue
 
             # 尝试转日期时间
-            converted_dt = pd.to_datetime(series, errors="coerce", infer_datetime_format=True)
+            converted_dt = pd.to_datetime(series, errors="coerce", format="mixed")
             dt_valid_ratio = converted_dt.notna().sum() / len(series)
             if dt_valid_ratio >= 0.85:
-                df[col] = pd.to_datetime(df[col], errors="coerce", infer_datetime_format=True)
+                df[col] = pd.to_datetime(df[col], errors="coerce", format="mixed")
 
         return df
 
