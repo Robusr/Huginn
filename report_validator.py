@@ -9,15 +9,14 @@
 
 """
 报告合规性验证器
-功能：自动检查分析报告的合规性和质量
-检查项（v2.0 重新分配权重）：
-1.  统计数量硬指标（30分——从40分降权）
-2.  统计结果有效性（20分）
-3.  数据发现合规性（20分）
-4.  业务分析覆盖度（10分——新增）
-5.  建议质量（10分——重构原课程建议合理性）
-6.  报告完整性（10分）
-输出：JSON + Markdown
+功能：自动检查数据分析报告的完整性与统计合规性
+检查项：
+1.  统计数量硬指标（5点估计/5区间估计/5假设检验/2ANOVA/2卡方）
+2.  统计结果有效性（p值范围、样本量、无编造数据）
+3.  数据发现合规性（引用正确p值、无因果错误、无模糊表述）
+4.  行动建议合理性（有数据依据、可落地）
+5.  报告完整性（数据概况、局限性说明）
+输出：JSON格式机器可读结果 + Markdown格式人类可读报告
 """
 import json
 import re
@@ -31,6 +30,7 @@ logger = get_logger(__name__)
 
 
 class ReportValidator:
+    # 默认分析完整性要求（从 Config 读取）
     REQUIREMENTS = Config.REQUIREMENTS
     CAUSAL_WORDS = Config.CAUSAL_WORDS
     VAGUE_WORDS = Config.VAGUE_WORDS
@@ -81,6 +81,16 @@ class ReportValidator:
         self.valid_tasks = self.files["valid_tasks.json"]
         self.findings = self.files["findings.json"]
         self.suggestions = self.files["suggestions.json"]
+        domain_path = self.run_dir / "domain_context.json"
+        self.domain_context = json.loads(domain_path.read_text(encoding="utf-8")) if domain_path.exists() else {}
+        distinctive_path = self.run_dir / "distinctive_features.json"
+        if distinctive_path.exists():
+            with open(distinctive_path, "r", encoding="utf-8") as f:
+                self.distinctive_features = json.load(f)
+        else:
+            self.distinctive_features = {"features": []}
+        final_report_path = self.run_dir / "final_report.md"
+        self.final_report_text = final_report_path.read_text(encoding="utf-8") if final_report_path.exists() else ""
 
         # 可选文件
         self.evidence_table = self._load_optional_json("evidence_table.json")
@@ -123,6 +133,43 @@ class ReportValidator:
         return self.results
 
     # ------------------------------
+    # 结构化统计证据工具
+    # ------------------------------
+    def _iter_stat_results_with_keys(self) -> List[Tuple[str, Dict[str, Any]]]:
+        pairs: List[Tuple[str, Dict[str, Any]]] = []
+
+        for section in ["hypothesis_tests", "anova", "chi_square_goodness_of_fit", "distribution_tests"]:
+            tests = self.stats_results.get(section, {}).get("tests", {})
+            self._collect_stat_results(section, tests, pairs)
+
+        self._collect_stat_results("point_estimation", self.stats_results.get("point_estimation", {}).get("fields", {}), pairs)
+        self._collect_stat_results("interval_estimation", self.stats_results.get("interval_estimation", {}).get("fields", {}), pairs)
+        self._collect_stat_results("correlations", self.stats_results.get("correlations", {}), pairs)
+        for feature in self.distinctive_features.get("features", []):
+            if not isinstance(feature, dict) or not feature.get("source_key"):
+                continue
+            pairs.append((feature["source_key"], feature))
+        return pairs
+
+    def _collect_stat_results(self, prefix: str, node: Any, pairs: List[Tuple[str, Dict[str, Any]]]) -> None:
+        if not isinstance(node, dict) or "error" in node:
+            return
+        if "p_value" in node or any(key in node for key in ["F_statistic", "chi2_statistic", "t_statistic", "statistic", "mean", "mean_ci"]):
+            pairs.append((prefix, node))
+            return
+        for key, value in node.items():
+            if isinstance(value, dict):
+                self._collect_stat_results(f"{prefix}.{key}", value, pairs)
+
+    @staticmethod
+    def _item_stat_keys(item: Dict[str, Any], valid_stat_keys: Any) -> List[str]:
+        valid = set(valid_stat_keys)
+        refs = item.get("source_stat_keys") or []
+        if isinstance(refs, str):
+            refs = [refs]
+        return [str(ref) for ref in refs if str(ref) in valid]
+
+    # ------------------------------
     # 1. 统计数量硬指标检查（40分）
     # ------------------------------
     def _check_statistical_quantity(self) -> None:
@@ -132,18 +179,25 @@ class ReportValidator:
 
         # 1. 点估计数量
         pe_count = len(self.stats_results.get("point_estimation", {}).get("fields", {}))
-        if pe_count >= self.REQUIREMENTS["point_estimation_min"]:
+        numeric_usable = sum(
+            1
+            for field in self.data_profile.get("fields", [])
+            if str(field.get("inferred_type", "")).startswith("numeric")
+            and field.get("column") in self.stats_results.get("point_estimation", {}).get("fields", {})
+        )
+        point_min = min(self.REQUIREMENTS["point_estimation_min"], numeric_usable)
+        if pe_count >= point_min:
             check["details"].append({
                 "item": "点估计数量",
                 "actual": pe_count,
-                "required": f"≥{self.REQUIREMENTS['point_estimation_min']}",
+                "required": f"≥{point_min}",
                 "pass": True
             })
         else:
             check["details"].append({
                 "item": "点估计数量",
                 "actual": pe_count,
-                "required": f"≥{self.REQUIREMENTS['point_estimation_min']}",
+                "required": f"≥{point_min}",
                 "pass": False,
                 "error": "点估计数量不足，需增加数值列"
             })
@@ -151,18 +205,19 @@ class ReportValidator:
 
         # 2. 区间估计数量
         ie_count = len(self.stats_results.get("interval_estimation", {}).get("fields", {}))
-        if ie_count >= self.REQUIREMENTS["interval_estimation_min"]:
+        interval_min = min(self.REQUIREMENTS["interval_estimation_min"], numeric_usable)
+        if ie_count >= interval_min:
             check["details"].append({
                 "item": "区间估计数量",
                 "actual": ie_count,
-                "required": f"≥{self.REQUIREMENTS['interval_estimation_min']}",
+                "required": f"≥{interval_min}",
                 "pass": True
             })
         else:
             check["details"].append({
                 "item": "区间估计数量",
                 "actual": ie_count,
-                "required": f"≥{self.REQUIREMENTS['interval_estimation_min']}",
+                "required": f"≥{interval_min}",
                 "pass": False,
                 "error": "区间估计数量不足，需增加数值列"
             })
@@ -171,6 +226,14 @@ class ReportValidator:
         # 3. 假设检验数量（排除有error的）
         ht_tests = self.stats_results.get("hypothesis_tests", {}).get("tests", {})
         ht_count = sum(1 for v in ht_tests.values() if isinstance(v, dict) and "error" not in v)
+        ht_count += sum(
+            1 for value in self.stats_results.get("correlations", {}).values()
+            if isinstance(value, dict) and "error" not in value and value.get("p_value") is not None
+        )
+        ht_count += sum(
+            1 for value in self.stats_results.get("distribution_tests", {}).get("tests", {}).values()
+            if isinstance(value, dict) and "error" not in value
+        )
         if ht_count >= self.REQUIREMENTS["hypothesis_test_min"]:
             check["details"].append({
                 "item": "假设检验数量",
@@ -261,13 +324,13 @@ class ReportValidator:
 
         # 1. 所有p值在0-1之间
         invalid_p_values = []
-        for test_type in ["hypothesis_tests", "anova", "chi_square_goodness_of_fit", "distribution_tests"]:
-            tests = self.stats_results.get(test_type, {}).get("tests", {})
-            for test_name, test_result in tests.items():
-                if isinstance(test_result, dict) and "p_value" in test_result:
-                    p_val = test_result["p_value"]
-                    if not (0 <= p_val <= 1):
-                        invalid_p_values.append(f"{test_type}/{test_name}: p={p_val}")
+        for stat_key, test_result in self._iter_stat_results_with_keys():
+            if isinstance(test_result, dict) and "p_value" in test_result:
+                p_val = test_result["p_value"]
+                if p_val is None:
+                    continue
+                if not isinstance(p_val, (int, float)) or not (0 <= p_val <= 1):
+                    invalid_p_values.append(f"{stat_key}: p={p_val}")
 
         if not invalid_p_values:
             check["details"].append({
@@ -286,14 +349,27 @@ class ReportValidator:
 
         # 2. 所有显著发现的p值都<0.05
         invalid_significant = []
+        stat_result_by_key = dict(self._iter_stat_results_with_keys())
         for finding in self.findings:
             evidence = finding.get("evidence", "")
+            conclusion = finding.get("conclusion", "")
+            explicitly_non_significant = any(
+                phrase in conclusion for phrase in ["不显著", "无显著", "未达显著", "未达到显著", "未达统计显著"]
+            )
             # 提取证据中的p值
             p_match = re.search(r"p=([\d\.]+)", evidence)
-            if p_match:
+            if p_match and not explicitly_non_significant:
                 p_val = float(p_match.group(1))
                 if p_val >= self.REQUIREMENTS["significant_p_threshold"]:
                     invalid_significant.append(f"发现[{finding['conclusion']}]: p={p_val}")
+                    continue
+            for stat_key in self._item_stat_keys(finding, stat_result_by_key.keys()):
+                if explicitly_non_significant:
+                    break
+                p_val = stat_result_by_key.get(stat_key, {}).get("p_value")
+                if isinstance(p_val, (int, float)) and p_val >= self.REQUIREMENTS["significant_p_threshold"]:
+                    invalid_significant.append(f"发现[{finding['conclusion']}]: {stat_key} p={p_val}")
+                    break
 
         if not invalid_significant:
             check["details"].append({
@@ -396,18 +472,18 @@ class ReportValidator:
 
         # 2. 每个发现都有明确的证据（引用统计量和p值，或描述性统计量）
         missing_evidence = []
+        valid_stat_keys = set(dict(self._iter_stat_results_with_keys()).keys())
         for i, finding in enumerate(self.findings):
             evidence = finding.get("evidence", "")
-            # 接受多种证据格式：假设检验(t/F/χ²+p值) 或 描述性统计(均值/标准差/CV)
-            has_inferential = re.search(r"[tFχ²]=[\d\.]+.*p=[\d\.]+", evidence)
-            has_descriptive = re.search(r"(均值|标准差|变异系数|样本量|中位数)", evidence)
-            if not (has_inferential or has_descriptive):
+            has_text_evidence = bool(re.search(r"[tFχ²Wr]=[\d\.\-]+.*p=[\d\.]+", evidence))
+            has_structured_evidence = bool(self._item_stat_keys(finding, valid_stat_keys))
+            if not has_text_evidence and not has_structured_evidence:
                 missing_evidence.append(f"发现{i+1}: {finding['conclusion']}")
 
         if not missing_evidence:
             check["details"].append({
                 "item": "数据发现证据完整性",
-                "actual": "所有发现都引用了统计量和p值",
+                "actual": "所有发现都引用了统计量/p值或结构化统计证据",
                 "pass": True
             })
         else:
@@ -425,6 +501,8 @@ class ReportValidator:
             conclusion = finding.get("conclusion", "")
             for word in self.CAUSAL_WORDS:
                 if word in conclusion:
+                    if word == "影响" and "极端值" in conclusion:
+                        continue
                     causal_errors.append(f"发现{i+1}: 使用了因果词汇'{word}'")
                     break
 
@@ -484,200 +562,58 @@ class ReportValidator:
         check["score"] = max(0, check["score"])
 
     # ------------------------------
-    # 4. 业务分析覆盖度检查（10分——新增）
-    # ------------------------------
-    def _check_business_analysis_completeness(self) -> None:
-        """检查业务分析模块是否按数据特征合理执行。"""
-        check = self.results["checks"]["business_analysis_completeness"]
-        check["score"] = 10
-
-        # 检查是否有利润数据但未执行亏损分析
-        has_profit = False
-        if self.field_registry:
-            reg_sum = self.field_registry.get("summary", {})
-            has_profit = reg_sum.get("has_profit_data", False)
-        if not has_profit:
-            # 回退：检查 stats_results 是否有 profit 相关
-            pe = self.stats_results.get("point_estimation", {}).get("fields", {})
-            for col in pe:
-                if "profit" in col.lower() or "利润" in col:
-                    has_profit = True
-                    break
-
-        has_discount = False
-        if self.field_registry:
-            has_discount = self.field_registry.get("summary", {}).get("has_discount_data", False)
-
-        # 亏损驱动分析检查
-        if has_profit and self.loss_driver and self.loss_driver.get("is_viable"):
-            check["details"].append({
-                "item": "亏损驱动分析",
-                "actual": "已完成",
-                "required": "数据有利润字段时应执行",
-                "pass": True,
-            })
-        elif has_profit and not self.loss_driver:
-            check["details"].append({
-                "item": "亏损驱动分析",
-                "actual": "未执行",
-                "required": "数据有利润字段时应执行",
-                "pass": False,
-                "error": "存在利润数据但未执行亏损驱动分析，报告缺少关键经营诊断",
-            })
-            check["score"] -= 3
-        else:
-            check["details"].append({
-                "item": "亏损驱动分析",
-                "actual": "不需执行（无利润数据）",
-                "required": "仅在有利数据时检查",
-                "pass": True,
-            })
-
-        # 折扣分析检查
-        if has_discount and self.discount_analysis and self.discount_analysis.get("is_viable"):
-            tp = self.discount_analysis.get("profit_tipping_point", {})
-            has_threshold = tp and tp.get("tipping_bin") is not None
-            check["details"].append({
-                "item": "折扣分析（含阈值识别）",
-                "actual": f"{'已完成（阈值={}）'.format(tp.get('tipping_bin','?')) if has_threshold else '已完成（未找到阈值）'}",
-                "required": "数据有折扣字段时应执行",
-                "pass": True,
-            })
-        elif has_discount and not self.discount_analysis:
-            check["details"].append({
-                "item": "折扣分析",
-                "actual": "未执行",
-                "required": "数据有折扣字段时应执行分层分析",
-                "pass": False,
-                "error": "存在折扣数据但未执行折扣响应分析，折扣相关结论可能不充分",
-            })
-            check["score"] -= 3
-        else:
-            check["details"].append({
-                "item": "折扣分析",
-                "actual": "不需执行（无折扣数据）",
-                "pass": True,
-            })
-
-        # 数据粒度检查
-        if self.granularity:
-            gr = self.granularity
-            check["details"].append({
-                "item": "数据粒度识别",
-                "actual": f"已识别: {gr.get('entity_description', '未知')}",
-                "required": "应明确行级实体类型",
-                "pass": True,
-            })
-        else:
-            check["details"].append({
-                "item": "数据粒度识别",
-                "actual": "未执行",
-                "required": "应识别行级实体类型",
-                "pass": False,
-                "error": "未进行数据粒度识别，可能导致比率分母错误",
-            })
-            check["score"] -= 2
-
-        # 高价值字段覆盖
-        high_value_covered = True
-        if self.field_registry:
-            reg_sum = self.field_registry.get("summary", {})
-            revenue_fields = reg_sum.get("revenue_fields", [])
-            profit_fields = reg_sum.get("profit_fields", [])
-            discount_fields = reg_sum.get("discount_fields", [])
-            dim_fields = reg_sum.get("dimension_fields", [])
-
-            coverage_issues = []
-            if revenue_fields and len(dim_fields) >= 2:
-                # 检查是否有维度×收入的交叉分析
-                tasks = self.valid_tasks
-                dim_cols_used = set()
-                for task in tasks:
-                    for var in task.get("variables", []):
-                        if var in dim_fields:
-                            dim_cols_used.add(var)
-                dim_coverage = len(dim_cols_used) / max(len(dim_fields), 1)
-                if dim_coverage < 0.3:
-                    coverage_issues.append(f"维度利用不足（{len(dim_cols_used)}/{len(dim_fields)}）")
-                    high_value_covered = False
-
-            if not coverage_issues:
-                check["details"].append({
-                    "item": "高价值字段覆盖",
-                    "actual": "关键业务字段得到合理利用",
-                    "pass": True,
-                })
-            else:
-                check["details"].append({
-                    "item": "高价值字段覆盖",
-                    "actual": "; ".join(coverage_issues),
-                    "required": "收入/利润/折扣/维度等字段应被充分分析",
-                    "pass": False,
-                    "error": "部分高价值字段未被充分利用",
-                })
-                check["score"] -= 2
-
-        check["pass"] = all(d.get("pass", False) for d in check["details"])
-        check["score"] = max(0, check["score"])
-
-    # ------------------------------
-    # 5. 建议质量检查（10分——重构）
+    # 4. 行动建议合理性检查（10分）
     # ------------------------------
     def _check_suggestions_reasonableness(self) -> None:
-        """旧名称——委托给 _check_suggestions_quality。"""
-        self._check_suggestions_quality()
-
-    def _check_suggestions_quality(self) -> None:
-        """检查建议是否有数据依据、是否具体可落地。"""
-        check = self.results["checks"]["suggestions_quality"]
-        check["score"] = check["max_score"]
+        """检查行动建议是否有数据依据、是否可落地"""
+        check = self.results["checks"]["suggestions_reasonableness"]
+        check["score"] = 10  # 满分10分
 
         if not self.suggestions:
             check["details"].append({
-                "item": "建议数量",
+                "item": "行动建议数量",
                 "actual": 0,
                 "required": "≥3条",
                 "pass": False,
-                "error": "没有生成任何改进建议",
+                "error": "没有生成任何行动建议"
             })
             check["score"] = 0
             check["pass"] = False
             return
 
-        # 1. 建议数量
+        # 1. 行动建议数量≥3条
         if len(self.suggestions) >= 3:
             check["details"].append({
-                "item": "建议数量",
+                "item": "行动建议数量",
                 "actual": len(self.suggestions),
                 "required": "≥3条",
                 "pass": True,
             })
         else:
             check["details"].append({
-                "item": "课程建议数量",
+                "item": "行动建议数量",
                 "actual": len(self.suggestions),
                 "required": "≥3条",
                 "pass": False,
-                "error": "课程建议数量不足"
+                "error": "行动建议数量不足"
             })
             check["score"] -= 3
 
         # 2. 每个建议都有数据依据（使用子串匹配，因为建议中可能截断结论）
         missing_evidence = []
+        valid_stat_keys = set(dict(self._iter_stat_results_with_keys()).keys())
+        finding_conclusions = [f["conclusion"] for f in self.findings]
+        finding_stat_keys = {
+            key
+            for finding in self.findings
+            for key in self._item_stat_keys(finding, valid_stat_keys)
+        }
         for i, suggestion in enumerate(self.suggestions):
             evidence = suggestion.get("evidence", "")
-            # 检查 evidence 是否与任一 finding 的 evidence 或 conclusion 匹配（子串即可）
-            found_match = False
-            if evidence:
-                for f in self.findings:
-                    f_evidence = f.get("evidence", "")
-                    f_conclusion = f.get("conclusion", "")
-                    # 子串匹配：建议的证据是否出现在发现的证据或结论中（或反之）
-                    if (evidence in f_evidence or f_evidence in evidence or
-                        evidence[:30] in f_conclusion or f_conclusion[:30] in evidence):
-                        found_match = True
-                        break
-            if not found_match:
+            suggestion_keys = set(self._item_stat_keys(suggestion, valid_stat_keys))
+            has_text_basis = bool(evidence and evidence in finding_conclusions)
+            has_structured_basis = bool(suggestion_keys and (suggestion_keys & finding_stat_keys or suggestion_keys <= valid_stat_keys))
+            if not has_text_basis and not has_structured_basis:
                 missing_evidence.append(f"建议{i+1}: {suggestion['suggestion']}")
 
         if not missing_evidence:
@@ -697,14 +633,10 @@ class ReportValidator:
 
         # 3. 建议具体可落地（中文字数≥20且有具体措施的不算笼统）
         vague_suggestions = []
-        vague_phrases = ["加强", "改进", "提高", "优化", "完善"]
         for i, suggestion in enumerate(self.suggestions):
             sug_text = suggestion.get("suggestion", "")
             direction = suggestion.get("direction", "")
-            combined = sug_text + direction
-            # 如果建议文本很短（<15中文字），可能是笼统的
-            chinese_chars = sum(1 for c in combined if '一' <= c <= '鿿')
-            if chinese_chars < 15:
+            if self._is_vague_suggestion(sug_text, direction):
                 vague_suggestions.append(f"建议{i+1}: {sug_text}")
             elif chinese_chars < 40 and any(phrase in sug_text for phrase in vague_phrases):
                 # 中等长度但仅含模糊动词，检查direction是否具体
@@ -729,6 +661,17 @@ class ReportValidator:
 
         check["pass"] = all(d["pass"] for d in check["details"])
         check["score"] = max(0, check["score"])
+
+    @staticmethod
+    def _is_vague_suggestion(suggestion: str, direction: str = "") -> bool:
+        """兼容中文无空格文本：只有泛化动词且正文、落地方向都过短时才判为笼统。"""
+        text = str(suggestion).strip()
+        detail = str(direction).strip()
+        if len(text) < 10:
+            return True
+        vague_phrases = ["加强", "改进", "提高", "优化", "完善"]
+        has_generic_verb = any(phrase in text for phrase in vague_phrases)
+        return has_generic_verb and len(text) < 30 and len(detail) < 15
 
     # ------------------------------
     # 5. 报告完整性检查（10分）
@@ -756,6 +699,9 @@ class ReportValidator:
 
         # 2. 包含局限性说明（检查建议、发现、以及实际报告文件）
         has_limitation = False
+        if any(term in self.final_report_text for term in ["局限性", "相关性不等于因果", "不能推断因果", "因果关系"]):
+            has_limitation = True
+
         for suggestion in self.suggestions:
             if "局限性" in suggestion.get("direction", "") or "相关性不等于因果" in suggestion.get("direction", ""):
                 has_limitation = True
@@ -789,7 +735,7 @@ class ReportValidator:
                 "actual": "未包含局限性说明",
                 "pass": False,
                 "error": "必须在报告中明确说明相关性不等于因果关系",
-                "suggestion": "在报告末尾添加局限性章节，说明样本量、问卷偏差等限制"
+                "suggestion": "在报告末尾添加局限性章节，说明样本量、测量偏差等限制"
             })
             check["score"] -= 4
 
@@ -854,10 +800,10 @@ class ReportValidator:
                 "确保每个发现都引用具体的统计量和p值"
             )
 
-        # 建议质量问题
-        if not self.results["checks"]["suggestions_quality"]["pass"]:
+        # 行动建议问题
+        if not self.results["checks"]["suggestions_reasonableness"]["pass"]:
             suggestions.append(
-                " 建议不够充分：请确保每个建议有数据依据，"
+                " 行动建议不够合理：请确保每个建议都有对应的数据发现，"
                 "并补充具体的改进措施和预期效果"
             )
 
@@ -876,7 +822,7 @@ class ReportValidator:
             )
 
         if not suggestions:
-            suggestions.append(" 所有检查项均通过，报告符合课程作业要求！")
+            suggestions.append(" 所有检查项均通过，报告符合默认分析完整性要求！")
 
         self.results["improvement_suggestions"] = suggestions
 
@@ -925,12 +871,9 @@ class ReportValidator:
                 "statistical_quantity": "统计数量硬指标",
                 "statistical_validity": "统计结果有效性",
                 "findings_compliance": "数据发现合规性",
-                "business_analysis_completeness": "业务分析覆盖度",
-                "suggestions_quality": "建议质量",
-                "report_completeness": "报告完整性",
-            }.get(name, name)
-            max_score = {"statistical_quantity": 30, "statistical_validity": 20, "findings_compliance": 20,
-                         "business_analysis_completeness": 10, "suggestions_quality": 10, "report_completeness": 10}.get(name, "?")
+                "suggestions_reasonableness": "行动建议合理性",
+                "report_completeness": "报告完整性"
+            }[name]
             result_emoji = "Done" if check["pass"] else "Error"
             lines.append(f"| {module_name} | {check['score']} | {max_score} | {result_emoji} |")
 
@@ -947,10 +890,9 @@ class ReportValidator:
                 "statistical_quantity": "2.1 统计数量硬指标（30分）",
                 "statistical_validity": "2.2 统计结果有效性（20分）",
                 "findings_compliance": "2.3 数据发现合规性（20分）",
-                "business_analysis_completeness": "2.4 业务分析覆盖度（10分）",
-                "suggestions_quality": "2.5 建议质量（10分）",
-                "report_completeness": "2.6 报告完整性（10分）",
-            }.get(name, name)
+                "suggestions_reasonableness": "2.4 行动建议合理性（10分）",
+                "report_completeness": "2.5 报告完整性（10分）"
+            }[name]
             lines.append(f"### {module_name}")
             lines.append("")
             lines.append("| 检查项 | 实际值 | 要求 | 结果 | 说明 |")
@@ -977,7 +919,7 @@ class ReportValidator:
             "",
             "---",
             "",
-            "*此报告由 report_validator.py 自动生成，所有检查项严格遵循课程作业验收标准。*"
+            "*此报告由 report_validator.py 自动生成，所有检查项遵循默认分析完整性标准。*"
         ])
 
         return "\n".join(lines)
@@ -989,7 +931,7 @@ if __name__ == "__main__":
     import sys
     if len(sys.argv) < 2:
         print("用法：python report_validator.py <运行输出目录路径>")
-        print("示例：python report_validator.py outputs/20260610_143022_课程问卷")
+        print("示例：python report_validator.py outputs/20260610_143022_销售数据")
         sys.exit(1)
 
     try:

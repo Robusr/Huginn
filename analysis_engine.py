@@ -19,6 +19,8 @@ import statsmodels.api as sm
 from statsmodels.formula.api import ols
 from statsmodels.stats.multicomp import pairwise_tukeyhsd
 
+from config import Config
+from domain_context import is_identifier_or_noise
 from logger import get_logger
 logger = get_logger(__name__)
 
@@ -107,7 +109,7 @@ class AnalysisEngine:
             for var in task["variables"]:
                 if column_info.get(var, {}).get("inferred_type", "").startswith("numeric"):
                     numeric_cols_used.add(var)
-        numeric_cols = list(numeric_cols_used)
+        numeric_cols = self._select_numeric_columns_for_estimation(numeric_cols_used)
 
         if numeric_cols:
             self.results["point_estimation"] = self._run_point_estimation(numeric_cols)
@@ -138,7 +140,11 @@ class AnalysisEngine:
                 self.results[f"task_{task_id}_error"] = str(e)
                 logger.warning("执行任务 %d 失败: %s", task_id, str(e))
 
-        # 3. 数量自查并保存
+        # 3. 任务驱动模式也补充基础卡方拟合优度检验，避免只依赖模型规划。
+        categorical_cols = self._categorical_columns(min_groups=2, max_groups=Config.ANALYSIS_MAX_GROUPS)
+        self.results["chi_square_goodness_of_fit"] = self._run_chi_square_gof(categorical_cols)
+
+        # 4. 数量自查并保存
         self.results["counts_check"] = self._verify_counts()
         self._save()
         logger.info("任务驱动统计结果已保存至 %s", self.output_dir / self.result_filename)
@@ -202,13 +208,17 @@ class AnalysisEngine:
             "significant": bool(p_val < self.alpha),
         }
 
-        # 事后检验（Tukey HSD）
-        if p_val < self.alpha:
+        # 事后检验只用于组数可控的场景，避免高基数分组导致组合爆炸。
+        if p_val < self.alpha and len(groups) <= Config.TUKEY_MAX_GROUPS:
             try:
                 tukey = pairwise_tukeyhsd(clean[num_col], clean[cat_col], alpha=self.alpha)
                 anova_result["tukey_hsd"] = str(tukey)
             except Exception as e:
                 anova_result["tukey_hsd_error"] = str(e)
+        elif p_val < self.alpha:
+            anova_result["tukey_hsd_skipped"] = (
+                f"组数{len(groups)}超过事后检验上限{Config.TUKEY_MAX_GROUPS}"
+            )
 
         self.results["anova"]["tests"][f"task_{task_id}_one_way_anova"] = anova_result
 
@@ -229,9 +239,14 @@ class AnalysisEngine:
 
     def _execute_correlation(self, col1: str, col2: str, task_id: int) -> None:
         """执行皮尔逊相关性分析。"""
-        corr, p_val = scipy_stats.pearsonr(
-            self.df[col1].dropna(), self.df[col2].dropna()
-        )
+        clean = self.df[[col1, col2]].dropna()
+        if len(clean) < 3:
+            self.results["correlations"][f"task_{task_id}_pearson"] = {
+                "error": f"样本量不足（n={len(clean)}）",
+                "variables": [col1, col2],
+            }
+            return
+        corr, p_val = scipy_stats.pearsonr(clean[col1], clean[col2])
 
         self.results["correlations"][f"task_{task_id}_pearson"] = {
             "method": "皮尔逊相关性分析",
@@ -624,7 +639,7 @@ class AnalysisEngine:
                     "significant": bool(p_val < self.alpha),
                 }
                 # Tukey HSD
-                if p_val < self.alpha:
+                if p_val < self.alpha and len(groups) <= Config.TUKEY_MAX_GROUPS:
                     try:
                         tukey = pairwise_tukeyhsd(clean[y_col], clean[cat1], alpha=self.alpha)
                         result["tests"]["one_way_anova_1"]["tukey_hsd"] = str(tukey)
@@ -878,8 +893,9 @@ class AnalysisEngine:
     # ==================================================================
 
     def _verify_counts(self) -> dict:
-        """确保输出满足 ≥5 区间估计、≥5 假设检验、≥2 ANOVA、≥2 卡方检验。"""
+        """确保输出满足 ≥5 点估计、≥5 区间估计、≥5 假设检验、≥2 ANOVA、≥2 卡方检验。"""
         counts = {
+            "point_estimation_fields": 0,
             "interval_estimation_fields": 0,
             "interval_estimation_per_field_params": 5,  # 每列 5 个区间参数
             "hypothesis_test_types": 0,
@@ -890,41 +906,63 @@ class AnalysisEngine:
             "notes": [],
         }
 
+        # 点估计
+        pe = self.results.get("point_estimation", {})
+        counts["point_estimation_fields"] = len(pe.get("fields", {}))
+        meaningful_numeric_count = len([c for c in self._numeric_columns() if not self._is_noise_column(c)])
+        min_point = min(Config.REQUIREMENTS["point_estimation_min"], meaningful_numeric_count)
+        if counts["point_estimation_fields"] < min_point:
+            counts["all_checks_pass"] = False
+            counts["notes"].append(
+                f"不足：仅 {counts['point_estimation_fields']} 个点估计字段（需 ≥{min_point}）"
+            )
+
         # 区间估计
         ie = self.results.get("interval_estimation", {})
         counts["interval_estimation_fields"] = len(ie.get("fields", {}))
-        if counts["interval_estimation_fields"] < 1:
+        min_interval = min(Config.REQUIREMENTS["interval_estimation_min"], meaningful_numeric_count)
+        if counts["interval_estimation_fields"] < min_interval:
             counts["all_checks_pass"] = False
-            counts["notes"].append("警告：无数值列可用于区间估计")
+            counts["notes"].append(
+                f"不足：仅 {counts['interval_estimation_fields']} 个区间估计字段（需 ≥{min_interval}）"
+            )
 
         # 假设检验
         ht = self.results.get("hypothesis_tests", {}).get("tests", {})
-        counts["hypothesis_test_types"] = len(ht)
-        if counts["hypothesis_test_types"] < 5:
+        correlations = self.results.get("correlations", {})
+        distributions = self.results.get("distribution_tests", {}).get("tests", {})
+        counts["hypothesis_test_types"] = (
+            self._count_valid_stat_results(ht)
+            + self._count_valid_stat_results(correlations)
+            + self._count_valid_stat_results(distributions)
+        )
+        min_hypothesis = Config.REQUIREMENTS["hypothesis_test_min"]
+        if counts["hypothesis_test_types"] < min_hypothesis:
             counts["all_checks_pass"] = False
             counts["notes"].append(
-                f"不足：仅 {counts['hypothesis_test_types']} 类假设检验（需 ≥5）"
+                f"不足：仅 {counts['hypothesis_test_types']} 类假设检验（需 ≥{min_hypothesis}）"
             )
 
         # ANOVA
         anova_tests = self.results.get("anova", {}).get("tests", {})
-        # 排除 error 键
-        counts["anova_tests"] = sum(
-            1 for k, v in anova_tests.items() if "error" not in str(v)[:50]
-        )
-        if counts["anova_tests"] < 2:
+        counts["anova_tests"] = self._count_valid_stat_results(anova_tests)
+        min_anova = Config.REQUIREMENTS["anova_min"]
+        if counts["anova_tests"] < min_anova:
             counts["all_checks_pass"] = False
             counts["notes"].append(
-                f"不足：仅 {counts['anova_tests']} 项 ANOVA（需 ≥2）"
+                f"不足：仅 {counts['anova_tests']} 项 ANOVA（需 ≥{min_anova}）"
             )
 
         # 卡方检验
         chi_tests = self.results.get("chi_square_goodness_of_fit", {}).get("tests", {})
-        counts["chi_square_tests"] = len(chi_tests)
-        if counts["chi_square_tests"] < 2:
+        chi_gof_count = self._count_valid_stat_results(chi_tests)
+        chi_independence_count = self._count_chi_square_hypothesis_tests(ht)
+        counts["chi_square_tests"] = chi_gof_count + chi_independence_count
+        min_chi = Config.REQUIREMENTS["chi_square_min"]
+        if counts["chi_square_tests"] < min_chi:
             counts["all_checks_pass"] = False
             counts["notes"].append(
-                f"不足：仅 {counts['chi_square_tests']} 个卡方拟合优度检验（需 ≥2）"
+                f"不足：仅 {counts['chi_square_tests']} 个卡方检验（需 ≥{min_chi}）"
             )
 
         if counts["all_checks_pass"]:
@@ -935,6 +973,86 @@ class AnalysisEngine:
     # ==================================================================
     # 工具方法
     # ==================================================================
+
+    def _select_numeric_columns_for_estimation(
+        self,
+        seed_cols: set[str],
+        *,
+        min_count: int | None = None,
+        max_count: int = 12,
+    ) -> list[str]:
+        """基础点/区间估计由代码兜底覆盖核心数值列，避免被模型任务质量拖累。"""
+        target = min_count or Config.REQUIREMENTS["point_estimation_min"]
+        all_numeric = [c for c in self._numeric_columns() if not self._is_noise_column(c)]
+        keywords = [
+            "兴趣程度",
+            "兴趣",
+            "技术难度",
+            "契合程度",
+            "契合",
+            "社会价值",
+            "竞争激烈程度",
+            "竞争",
+            "总体机会",
+            "创业",
+            "人形机器人",
+        ]
+        seed_ordered = self._sort_columns_by_keywords([c for c in seed_cols if c in all_numeric], keywords)
+        ordered = self._sort_columns_by_keywords(all_numeric, keywords)
+
+        selected: list[str] = []
+        for col in seed_ordered + ordered:
+            if col not in all_numeric or col in selected:
+                continue
+            selected.append(col)
+            if len(selected) >= max(max_count, target):
+                break
+        return selected[:max(max_count, target)]
+
+    @staticmethod
+    def _count_valid_stat_results(node: Any) -> int:
+        if not isinstance(node, dict):
+            return 0
+        if "error" in node:
+            return 0
+        if any(key in node for key in ["p_value", "F_statistic", "chi2_statistic", "t_statistic", "statistic"]):
+            return 1
+        return sum(AnalysisEngine._count_valid_stat_results(value) for value in node.values())
+
+    @classmethod
+    def _count_chi_square_hypothesis_tests(cls, node: Any) -> int:
+        if not isinstance(node, dict):
+            return 0
+        count = 0
+        for key, value in node.items():
+            if not isinstance(value, dict) or "error" in value:
+                continue
+            method = str(value.get("method", ""))
+            if "chi_square" in str(key) or "卡方" in method:
+                count += cls._count_valid_stat_results(value)
+            else:
+                count += cls._count_chi_square_hypothesis_tests(value)
+        return count
+
+    def _is_noise_column(self, column: str) -> bool:
+        unique = int(self.df[column].nunique(dropna=True)) if column in self.df.columns else 0
+        inferred_type = "numeric_continuous" if column in self.df.columns and pd.api.types.is_numeric_dtype(self.df[column]) else "categorical"
+        return is_identifier_or_noise(
+            column,
+            {"unique": unique, "inferred_type": inferred_type},
+            len(self.df),
+        )
+
+    @staticmethod
+    def _sort_columns_by_keywords(cols: list[str], keywords: list[str]) -> list[str]:
+        def rank(col: str) -> tuple[int, str]:
+            text = str(col)
+            for index, keyword in enumerate(keywords):
+                if keyword in text:
+                    return index, text
+            return len(keywords), text
+
+        return sorted(cols, key=rank)
 
     def _numeric_columns(self) -> list[str]:
         return [

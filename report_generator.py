@@ -1,49 +1,48 @@
 # -*- coding: utf-8 -*-
 """
-@File    : report_generator.py
-@Author  : Robusr
-@Date    : 2026/6/16
-@Description: 完整Markdown报告生成器 — 基于中间JSON结果自动生成7章课程分析报告
-@Software: PyCharm
+通用数据分析报告生成器。
+默认输出更适合直接提交和阅读的正式版报告：
+- 目录使用长点线 + 页码
+- 标题采用大小标题层级
+- 数据概览改为精炼文本
+- 图表解读固定包含关键数据、发现、检查方法
+- Word 为主要交付格式，并可同步生成 PDF
 """
 
-"""
-报告生成器
-功能：读取 agent_runner.py 生成的标准化中间结果，自动生成域自适应的完整报告。
-用法：
-    python report_generator.py outputs/<run_dir> "用户分析需求"
-    python report_generator.py outputs/<run_dir> "用户分析需求" --format word
-"""
+from __future__ import annotations
 
 import json
+import math
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
-from config import Config, clean_field_name
+from config import Config
+from label_utils import clean_choice, humanize_column_name
 from logger import get_logger
 
 logger = get_logger(__name__)
 
 
 class ReportGenerator:
-    """域自适应报告生成器：读取中间 JSON → 组装完整 Markdown 报告。"""
+    TITLE = "数据分析报告"
 
-    # 默认章节（不含业务模块章）
-    _BASE_CHAPTERS = [
-        "一、数据来源与分析目标",
-        "二、数据概况与预处理",
-        "三、描述性统计与可视化",
-        "四、统计推断分析",
-        "五、业务模块分析",
-        "六、主要数据发现",
-        "七、改进建议",
-        "八、局限性说明",
+    MAIN_SECTIONS = [
+        {"id": "1", "title": "执行摘要", "level": 1},
+        {"id": "2", "title": "数据概览", "level": 1},
+        {"id": "3", "title": "重点图表分析", "level": 1},
+        {"id": "4", "title": "主要发现", "level": 1},
+        {"id": "5", "title": "行动建议", "level": 1},
+        {"id": "6", "title": "局限性与验证摘要", "level": 1},
     ]
 
-    # 图表中文描述映射
-    CHART_LABELS = Config.CHART_LABELS
+    CHART_LABELS = {
+        "bar_chart": "图 3-1 分组样本量与均值对比",
+        "box_plot": "图 3-2 分组分布差异箱线图",
+        "scatter_plot": "图 3-3 关键维度联动散点图",
+        "correlation_heatmap": "图 3-4 核心数值指标相关性热力图",
+    }
 
     def __init__(
         self,
@@ -51,1509 +50,1437 @@ class ReportGenerator:
         user_requirement: str = "",
         domain_config=None,
     ) -> None:
-        """
-        初始化报告生成器。
-        :param run_dir: agent_runner.py 输出的运行目录路径
-        :param user_requirement: 用户输入的分析需求
-        :param domain_config: 领域配置（DomainConfig）
-        """
         self.run_dir = Path(run_dir)
-        self.user_requirement = user_requirement
-        self.domain_config = domain_config
+        self.user_requirement = user_requirement or Config.DEFAULT_REQUIREMENT
+        self.generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.TITLE = "数据分析报告"
+        self.subtitle = "聚焦主要发现、图表解读与行动建议"
+        self.MAIN_SECTIONS = [dict(item) for item in type(self).MAIN_SECTIONS]
 
-        # 域自适应章节
-        if domain_config and domain_config.key == "education_survey":
-            self.CHAPTERS = [
-                "一、数据来源与分析目标",
-                "二、数据概况与预处理",
-                "三、描述性统计与可视化",
-                "四、统计推断分析",
-                "五、主要数据发现",
-                "六、课程改进建议",
-                "七、局限性说明",
-            ]
-            self.has_business_chapter = False
-        else:
-            self.CHAPTERS = self._BASE_CHAPTERS
-            self.has_business_chapter = True
-
-        # 数据容器
         self.data_profile: Dict[str, Any] = {}
         self.stats_results: Dict[str, Any] = {}
-        self.findings: List[Dict] = []
-        self.suggestions: List[Dict] = []
-        self.valid_tasks: List[Dict] = []
+        self.findings: List[Dict[str, Any]] = []
+        self.suggestions: List[Dict[str, Any]] = []
+        self.valid_tasks: List[Dict[str, Any]] = []
         self.validation_result: Dict[str, Any] = {}
         self.chart_files: List[str] = []
-        self.evidence_table: Dict[str, Any] = {}
-        self.loss_driver: Dict[str, Any] = {}
-        self.discount_analysis: Dict[str, Any] = {}
-        self.pareto_results: Dict[str, Any] = {}
-        self.cross_dim_results: Dict[str, Any] = {}
-        self.granularity: Dict[str, Any] = {}
-        self.field_registry: Dict[str, Any] = {}
+        self.chart_metadata: Dict[str, Any] = {}
+        self.domain_context: Dict[str, Any] = {}
+        self.report_narrative: Dict[str, Any] = {}
 
-        # 报告生成时间
-        self.generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.focus_fields: List[str] = []
+        self.significant_anova: List[Dict[str, Any]] = []
+        self.strong_point_estimates: List[Dict[str, Any]] = []
+        self.heatmap_pairs: List[Dict[str, Any]] = []
+        self.chart_notes: List[Dict[str, Any]] = []
+        self.sections_cache: Optional[List[Dict[str, Any]]] = None
 
     @property
     def is_education(self) -> bool:
         return self.domain_config is not None and self.domain_config.key == "education_survey"
 
     # ==================================================================
-    # 公开 API
+    # Public API
     # ==================================================================
 
     def generate(self) -> str:
-        """主入口：加载数据 → 构建 7 章 + 附录 → 返回完整 Markdown 字符串。"""
         self._load_all_data()
         self._discover_charts()
-        lines = self._render_report()
-        return "\n".join(lines)
+        self._prepare_report_context()
+        lines = self._render_markdown()
+        return "\n".join(lines).strip() + "\n"
 
     def save(self, filename: str = "final_report.md") -> Path:
-        """生成报告并保存到 run_dir。"""
         content = self.generate()
         path = self.run_dir / filename
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(content)
-        logger.info("报告已保存至 %s", path)
+        path.write_text(content, encoding="utf-8")
+        logger.info("Markdown 报告已保存至 %s", path)
         return path
 
     def export_word(self, filename: str = "final_report.docx") -> Path:
-        """导出报告为 Word 文档（需 python-docx）。"""
-        try:
-            from docx import Document
-            from docx.shared import Inches, Pt, RGBColor
-            from docx.enum.text import WD_ALIGN_PARAGRAPH
-        except ImportError:
-            raise ImportError("需要安装 python-docx：pip install python-docx")
+        from docx import Document
+        from docx.enum.section import WD_SECTION
+        from docx.enum.style import WD_STYLE_TYPE
+        from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK, WD_TAB_ALIGNMENT, WD_TAB_LEADER
+        from docx.oxml import OxmlElement
+        from docx.oxml.ns import qn
+        from docx.shared import Cm, Pt, RGBColor
+
+        self._load_if_needed()
+        sections = self._build_sections()
 
         doc = Document()
+        section = doc.sections[0]
+        section.page_width = Cm(21.0)
+        section.page_height = Cm(29.7)
+        section.top_margin = Cm(2.2)
+        section.bottom_margin = Cm(2.0)
+        section.left_margin = Cm(2.4)
+        section.right_margin = Cm(2.2)
 
-        # 设置默认字体（尝试中文字体）
-        style = doc.styles["Normal"]
-        font = style.font
-        font.name = "SimHei"
-        font.size = Pt(11)
+        self._configure_word_styles(doc)
+        self._add_footer_page_number(doc)
 
-        # 获取报告内容，按行解析
-        markdown_content = self.generate()
-        lines = markdown_content.split("\n")
+        title = doc.add_paragraph(style="Title")
+        title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run = title.add_run(self.TITLE)
+        run.font.bold = True
 
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
+        sub = doc.add_paragraph(style="ReportBody")
+        sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        sub.add_run(self.subtitle).italic = True
 
-            # 一级标题 #
-            if line.startswith("# ") and not line.startswith("## "):
-                heading_text = line[2:].strip()
-                doc.add_heading(heading_text, level=1)
+        doc.add_paragraph("", style="ReportBody")
 
-            # 二级标题 ##
-            elif line.startswith("## "):
-                heading_text = line[3:].strip()
-                doc.add_heading(heading_text, level=2)
+        toc_title = doc.add_paragraph("目 录", style="Heading 1")
+        toc_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        toc_title.paragraph_format.page_break_before = False
+        self._render_static_toc_docx(doc)
 
-            # 三级标题 ###
-            elif line.startswith("### "):
-                heading_text = line[4:].strip()
-                doc.add_heading(heading_text, level=3)
-
-            # Markdown 图片 ![desc](path)
-            elif line.startswith("![") and "](" in line:
-                match = re.match(r"!\[(.+?)\]\((.+?)\)", line)
-                if match:
-                    desc, img_path = match.groups()
-                    full_path = self.run_dir / img_path
-                    if full_path.exists():
-                        p = doc.add_paragraph()
-                        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                        run = p.add_run(desc)
-                        run.font.size = Pt(9)
-                        run.font.color.rgb = RGBColor(128, 128, 128)
-                        try:
-                            doc.add_picture(str(full_path), width=Inches(5.5))
-                        except Exception:
-                            p2 = doc.add_paragraph(f"[图片: {desc}]")
-                            p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
-
-            # 水平线 ---
-            elif line == "---":
-                doc.add_paragraph("─" * 60)
-
-            # 块引用 >
-            elif line.startswith(">"):
-                p = doc.add_paragraph()
-                run = p.add_run(line[1:].strip())
-                run.font.size = Pt(9)
-                run.font.color.rgb = RGBColor(128, 128, 128)
-
-            # 表格行 |
-            elif line.startswith("|") and line.endswith("|"):
-                # 跳过分隔行（如 |---|---|）
-                if re.match(r"^\|[\s\-:]+\|", line):
-                    continue
-                # 将表格行作为普通段落处理（完整的 docx 表格转换过于复杂）
-                cells = [c.strip() for c in line.split("|")[1:-1]]
-                p = doc.add_paragraph("  |  ".join(cells))
-
-            # 列表项 - 或 *
-            elif line.startswith("- ") or line.startswith("* "):
-                doc.add_paragraph(line[2:].strip(), style="List Bullet")
-
-            # 数字列表
-            elif re.match(r"^\d+\.\s", line):
-                doc.add_paragraph(line, style="List Number")
-
-            # 普通段落
-            else:
-                # 处理加粗 **text**
-                p = doc.add_paragraph()
-                parts = re.split(r"(\*\*.+?\*\*)", line)
-                for part in parts:
-                    if part.startswith("**") and part.endswith("**"):
-                        run = p.add_run(part[2:-2])
-                        run.bold = True
-                    else:
-                        p.add_run(part)
+        for section_data in sections:
+            self._render_section_docx(doc, section_data)
 
         path = self.run_dir / filename
         doc.save(str(path))
         logger.info("Word 报告已保存至 %s", path)
         return path
 
+    def export_pdf(self, filename: str = "final_report.pdf") -> Optional[Path]:
+        try:
+            from reportlab.lib import colors
+            from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT, TA_RIGHT
+            from reportlab.lib.pagesizes import A4
+            from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+            from reportlab.lib.units import cm
+            from reportlab.pdfbase import pdfmetrics
+            from reportlab.pdfbase.ttfonts import TTFont
+            from reportlab.platypus import (
+                Image,
+                KeepTogether,
+                PageBreak,
+                Paragraph,
+                SimpleDocTemplate,
+                Spacer,
+            )
+        except ImportError:
+            logger.warning("缺少 PDF 导出依赖，跳过 PDF 输出")
+            return None
+
+        self._load_if_needed()
+        sections = self._build_sections()
+
+        base_dir = self.run_dir
+        path = self.run_dir / filename
+
+        songti = "/System/Library/Fonts/Supplemental/Songti.ttc"
+        heiti = "/System/Library/Fonts/STHeiti Medium.ttc"
+        if Path(songti).exists():
+            pdfmetrics.registerFont(TTFont("Songti", songti))
+        if Path(heiti).exists():
+            pdfmetrics.registerFont(TTFont("Heiti", heiti))
+
+        styles = getSampleStyleSheet()
+        styles.add(
+            ParagraphStyle(
+                name="RptTitle",
+                fontName="Heiti" if Path(heiti).exists() else "Helvetica-Bold",
+                fontSize=20,
+                leading=26,
+                alignment=TA_CENTER,
+                spaceAfter=10,
+            )
+        )
+        styles.add(
+            ParagraphStyle(
+                name="RptSubtitle",
+                fontName="Songti" if Path(songti).exists() else "Helvetica",
+                fontSize=10.5,
+                leading=16,
+                alignment=TA_CENTER,
+                textColor=colors.HexColor("#4A5A6A"),
+                spaceAfter=10,
+            )
+        )
+        styles.add(
+            ParagraphStyle(
+                name="RptBody",
+                fontName="Songti" if Path(songti).exists() else "Helvetica",
+                fontSize=10.5,
+                leading=16,
+                alignment=TA_JUSTIFY,
+                spaceAfter=6,
+            )
+        )
+        styles.add(
+            ParagraphStyle(
+                name="RptBullet",
+                parent=styles["RptBody"],
+                alignment=TA_LEFT,
+                leftIndent=14,
+                firstLineIndent=-10,
+                spaceAfter=3,
+            )
+        )
+        styles.add(
+            ParagraphStyle(
+                name="RptNumber",
+                parent=styles["RptBody"],
+                alignment=TA_LEFT,
+                leftIndent=18,
+                firstLineIndent=-14,
+                spaceAfter=3,
+            )
+        )
+        styles.add(
+            ParagraphStyle(
+                name="RptH1",
+                fontName="Heiti" if Path(heiti).exists() else "Helvetica-Bold",
+                fontSize=15.5,
+                leading=22,
+                textColor=colors.HexColor("#1F2A44"),
+                spaceBefore=8,
+                spaceAfter=8,
+            )
+        )
+        styles.add(
+            ParagraphStyle(
+                name="RptH2",
+                fontName="Heiti" if Path(heiti).exists() else "Helvetica-Bold",
+                fontSize=12.5,
+                leading=18,
+                textColor=colors.HexColor("#385170"),
+                spaceBefore=6,
+                spaceAfter=6,
+                keepWithNext=1,
+            )
+        )
+        styles.add(
+            ParagraphStyle(
+                name="RptH3",
+                fontName="Heiti" if Path(heiti).exists() else "Helvetica-Bold",
+                fontSize=11.2,
+                leading=16,
+                textColor=colors.HexColor("#4A5A6A"),
+                spaceBefore=4,
+                spaceAfter=5,
+                keepWithNext=1,
+            )
+        )
+        styles.add(
+            ParagraphStyle(
+                name="RptCaption",
+                fontName="Songti" if Path(songti).exists() else "Helvetica",
+                fontSize=9,
+                leading=13,
+                alignment=TA_CENTER,
+                textColor=colors.HexColor("#5C677D"),
+                spaceAfter=6,
+            )
+        )
+        styles.add(
+            ParagraphStyle(
+                name="RptTOC1",
+                parent=styles["RptBody"],
+                alignment=TA_LEFT,
+                fontSize=10.8,
+                leading=16,
+                spaceAfter=3,
+            )
+        )
+        styles.add(
+            ParagraphStyle(
+                name="RptTOC2",
+                parent=styles["RptBody"],
+                alignment=TA_LEFT,
+                fontSize=10,
+                leading=15,
+                leftIndent=14,
+                spaceAfter=2,
+            )
+        )
+        styles.add(
+            ParagraphStyle(
+                name="RptTOCDots",
+                parent=styles["RptBody"],
+                alignment=TA_RIGHT,
+                fontSize=10,
+                leading=15,
+                textColor=colors.HexColor("#667085"),
+                spaceAfter=2,
+            )
+        )
+        styles.add(
+            ParagraphStyle(
+                name="RptTOCPage",
+                parent=styles["RptBody"],
+                alignment=TA_RIGHT,
+                fontSize=10,
+                leading=15,
+                spaceAfter=2,
+            )
+        )
+
+        story = [
+            Paragraph(self.TITLE, styles["RptTitle"]),
+            Paragraph(self.subtitle, styles["RptSubtitle"]),
+            Spacer(1, 0.2 * cm),
+            Paragraph("目 录", styles["RptH1"]),
+        ]
+        story.extend(self._render_pdf_toc_flowables(styles))
+        story.append(PageBreak())
+
+        for section_data in sections:
+            story.append(Paragraph(section_data["heading"], styles["RptH1"]))
+            for block in section_data["blocks"]:
+                story.extend(self._render_pdf_block(block, styles, base_dir))
+            story.append(PageBreak())
+        if story and isinstance(story[-1], PageBreak):
+            story.pop()
+
+        def add_page_num(canvas, _doc):
+            canvas.setFont("Songti" if Path(songti).exists() else "Helvetica", 9)
+            canvas.setFillColor(colors.HexColor("#666666"))
+            canvas.drawCentredString(A4[0] / 2, 1.0 * cm, str(canvas.getPageNumber()))
+
+        doc = SimpleDocTemplate(
+            str(path),
+            pagesize=A4,
+            leftMargin=2.05 * cm,
+            rightMargin=2.0 * cm,
+            topMargin=1.8 * cm,
+            bottomMargin=1.6 * cm,
+        )
+        doc.build(story, onFirstPage=add_page_num, onLaterPages=add_page_num)
+        logger.info("PDF 报告已保存至 %s", path)
+        return path
+
     # ==================================================================
-    # 数据加载
+    # Load / Prepare
     # ==================================================================
+
+    def _load_if_needed(self) -> None:
+        if self.sections_cache is not None:
+            return
+        self._load_all_data()
+        self._discover_charts()
+        self._prepare_report_context()
 
     def _load_all_data(self) -> None:
-        """加载运行目录中的所有中间结果文件。"""
-        # 必需文件
         self.data_profile = self._load_json("data_profile.json", required=True)
         self.stats_results = self._load_json("stats_results.json", required=True)
-
-        # 可选文件
         self.findings = self._load_json_list("findings.json")
         self.suggestions = self._load_json_list("suggestions.json")
         self.valid_tasks = self._load_json_list("valid_tasks.json")
         self.validation_result = self._load_json("validation_result.json", required=False)
-        self.evidence_table = self._load_json("evidence_table.json", required=False)
-        self.field_registry = self._load_json("field_registry.json", required=False)
-        self.granularity = self._load_json("granularity.json", required=False)
-        self.loss_driver = self._load_json("loss_driver_results.json", required=False)
-        self.discount_analysis = self._load_json("discount_analysis_results.json", required=False)
-        self.pareto_results = self._load_json("pareto_results.json", required=False)
-        self.cross_dim_results = self._load_json("cross_dimension_results.json", required=False)
+        self.chart_metadata = self._load_json("chart_metadata.json", required=False)
+        self.domain_context = self._load_json("domain_context.json", required=False)
+        self.report_narrative = self._load_json("report_narrative.json", required=False)
+        self.TITLE = self.report_narrative.get("title") or self.domain_context.get("report_title") or "数据分析报告"
+        self.subtitle = self.report_narrative.get("subtitle") or self.domain_context.get("report_subtitle") or self.subtitle
+        recommendation_title = self.domain_context.get("recommendation_section", "行动建议")
+        self.MAIN_SECTIONS[4]["title"] = recommendation_title
+        if self.report_narrative.get("findings"):
+            self.findings = self.report_narrative["findings"]
+        if self.report_narrative.get("suggestions"):
+            self.suggestions = self.report_narrative["suggestions"]
 
     def _load_json(self, filename: str, required: bool = False) -> Dict[str, Any]:
-        """加载单个 JSON 文件。"""
         path = self.run_dir / filename
         if not path.exists():
             if required:
                 raise FileNotFoundError(f"缺少必需文件: {filename}（路径: {self.run_dir}）")
             return {}
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
+        with open(path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
 
-    def _load_json_list(self, filename: str) -> List[Dict]:
-        """加载 JSON 数组文件。"""
+    def _load_json_list(self, filename: str) -> List[Dict[str, Any]]:
         path = self.run_dir / filename
         if not path.exists():
             return []
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            if isinstance(data, list):
-                return data
-            return []
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        return data if isinstance(data, list) else []
 
     def _discover_charts(self) -> None:
-        """发现 charts/ 目录下的所有 PNG 图表，按固定顺序排序。"""
         chart_dir = self.run_dir / "charts"
         if not chart_dir.exists():
+            self.chart_files = []
             return
-
-        png_files = sorted(chart_dir.glob("*.png"))
-        # 固定顺序：bar → box → scatter → heatmap → 其他
         preferred = ["bar_chart", "box_plot", "scatter_plot", "correlation_heatmap"]
-        ordered = []
-        for name in preferred:
-            for f in png_files:
-                if f.stem == name:
-                    ordered.append(f"charts/{f.name}")
-                    break
-        # 追加未在优先列表中的
-        for f in png_files:
-            rel = f"charts/{f.name}"
+        png_files = sorted(chart_dir.glob("*.png"))
+        ordered: List[str] = []
+        for stem in preferred:
+            for file in png_files:
+                if file.stem == stem:
+                    ordered.append(f"charts/{file.name}")
+        for file in png_files:
+            rel = f"charts/{file.name}"
             if rel not in ordered:
                 ordered.append(rel)
-
         self.chart_files = ordered
 
+    def _prepare_report_context(self) -> None:
+        self._ensure_fallback_findings_and_suggestions()
+        self.focus_fields = self._select_focus_fields(self.data_profile.get("fields", []))
+        self.significant_anova = self._collect_significant_anova()
+        self.strong_point_estimates = self._collect_top_point_estimates()
+        self.heatmap_pairs = self._collect_heatmap_pairs()
+        self.chart_notes = self._build_chart_notes()
+        self.sections_cache = self._build_sections()
+
+    def _build_sections(self) -> List[Dict[str, Any]]:
+        if self.sections_cache is not None:
+            return self.sections_cache
+
+        sections = [
+            {
+                "id": "1",
+                "heading": "一、执行摘要",
+                "blocks": self._section_exec_summary(),
+            },
+            {
+                "id": "2",
+                "heading": "二、数据概览",
+                "blocks": self._section_dataset_overview(),
+            },
+            {
+                "id": "3",
+                "heading": "三、重点图表分析",
+                "blocks": self._section_chart_analysis(),
+            },
+            {
+                "id": "4",
+                "heading": "四、主要发现",
+                "blocks": self._section_findings(),
+            },
+            {
+                "id": "5",
+                "heading": f"五、{self.domain_context.get('recommendation_section', '行动建议')}",
+                "blocks": self._section_suggestions(),
+            },
+            {
+                "id": "6",
+                "heading": "六、局限性与验证摘要",
+                "blocks": self._section_limitations(),
+            },
+        ]
+        self.sections_cache = sections
+        return sections
+
     # ==================================================================
-    # 报告渲染 — 主入口
+    # Markdown rendering
     # ==================================================================
 
-    def _render_report(self) -> List[str]:
-        """渲染完整报告。"""
+    def _render_markdown(self) -> List[str]:
+        sections = self._build_sections()
+        lines = [
+            f"# {self.TITLE}",
+            "",
+            self.subtitle + ("。" if not self.subtitle.endswith("。") else ""),
+            "",
+            "## 目 录",
+            "",
+        ]
+        lines.extend(self._render_static_toc_lines())
+        lines.extend(["", "---", ""])
+
+        for section in sections:
+            lines.append(f"## {section['heading']}")
+            lines.append("")
+            lines.extend(self._render_markdown_blocks(section["blocks"]))
+            lines.extend(["", "---", ""])
+
+        lines.extend(
+            [
+                "",
+                "*本报告由 Huginn 自动生成，已按“少过程、重发现、强图表解读”的正式报告模式输出。*",
+            ]
+        )
+        return lines
+
+    def _render_markdown_blocks(self, blocks: List[Dict[str, Any]]) -> List[str]:
         lines: List[str] = []
-
-        # 报告头
-        lines.extend(self._render_header())
-
-        # 目录
-        lines.extend(self._render_toc())
-
-        # 各章节
-        lines.extend(self._render_chapter_1())
-        lines.extend(self._render_chapter_2())
-        lines.extend(self._render_chapter_3())
-        lines.extend(self._render_chapter_4())
-        if self.has_business_chapter:
-            lines.extend(self._render_chapter_5_business())
-        lines.extend(self._render_chapter_findings())
-        lines.extend(self._render_chapter_suggestions())
-        lines.extend(self._render_chapter_limitations())
-
-        # 附录
-        lines.extend(self._render_appendix())
-
-        # 页脚
-        lines.extend(self._render_footer())
-
+        for block in blocks:
+            kind = block["type"]
+            if kind == "heading2":
+                lines.extend([f"### {block['text']}", ""])
+            elif kind == "heading3":
+                lines.extend([f"#### {block['text']}", ""])
+            elif kind == "paragraph":
+                lines.extend([block["text"], ""])
+            elif kind == "bullets":
+                for item in block["items"]:
+                    lines.append(f"- {item}")
+                lines.append("")
+            elif kind == "numbered":
+                for index, item in enumerate(block["items"], 1):
+                    lines.append(f"{index}. {item}")
+                lines.append("")
+            elif kind == "image":
+                lines.extend([f"![{block['caption']}]({block['path']})", ""])
+            elif kind == "toc":
+                lines.extend(block["lines"] + [""])
+            elif kind == "page_break":
+                lines.extend(["<!-- pagebreak -->", ""])
         return lines
 
     # ==================================================================
-    # 报告头
+    # DOCX rendering
     # ==================================================================
 
-    def _render_header(self) -> List[str]:
-        profile_meta = self.data_profile.get("meta", {})
-        n_rows = profile_meta.get("n_rows", "?")
-        n_cols = profile_meta.get("n_columns", "?")
+    def _configure_word_styles(self, doc) -> None:
+        from docx.enum.style import WD_STYLE_TYPE
+        from docx.enum.text import WD_TAB_ALIGNMENT, WD_TAB_LEADER
+        from docx.oxml.ns import qn
+        from docx.shared import Cm, Pt, RGBColor
 
-        # 域自适应标题
-        if self.domain_config:
-            report_title = self.domain_config.report_title
-            report_subtitle = self.domain_config.report_subtitle
-        else:
-            fp_stem = self.run_dir.name.split("_", 1)[-1] if "_" in self.run_dir.name else ""
-            report_title = f"{fp_stem}数据分析报告" if fp_stem else "数据分析报告"
-            report_subtitle = "基于数据探索的分析与建议"
+        section = doc.sections[0]
+        usable_width = section.page_width - section.left_margin - section.right_margin
 
-        lines = [
-            f"# {report_title}",
-            "",
-            f"> **生成时间**：{self.generated_at}",
-            f"> **数据规模**：{n_rows} 行 × {n_cols} 列",
-        ]
-        if self.user_requirement:
-            lines.append(f"> **分析需求**：{self.user_requirement}")
-        lines.append(f"> **报告版本**：Huginn {Config.APP_VERSION} 自动生成")
-        lines.extend(["", "---", ""])
+        normal = doc.styles["Normal"]
+        normal.font.name = "宋体"
+        normal._element.rPr.rFonts.set(qn("w:eastAsia"), "宋体")
+        normal.font.size = Pt(10.5)
+        normal.paragraph_format.space_after = Pt(6)
+        normal.paragraph_format.line_spacing = 1.35
 
-        # 执行摘要
-        lines.extend(self._render_executive_summary())
-        return lines
+        title_style = doc.styles["Title"]
+        title_style.font.name = "黑体"
+        title_style._element.rPr.rFonts.set(qn("w:eastAsia"), "黑体")
+        title_style.font.size = Pt(22)
+        title_style.font.color.rgb = RGBColor(27, 41, 66)
+        title_style.paragraph_format.space_after = Pt(10)
 
-    def _render_executive_summary(self) -> List[str]:
-        """生成执行摘要，快速概览报告核心发现。"""
-        lines = ["## 执行摘要", ""]
+        h1 = doc.styles["Heading 1"]
+        h1.font.name = "黑体"
+        h1._element.rPr.rFonts.set(qn("w:eastAsia"), "黑体")
+        h1.font.size = Pt(15.5)
+        h1.font.color.rgb = RGBColor(31, 42, 68)
+        h1.paragraph_format.space_before = Pt(8)
+        h1.paragraph_format.space_after = Pt(8)
+        h1.paragraph_format.page_break_before = True
 
+        h2 = doc.styles["Heading 2"]
+        h2.font.name = "黑体"
+        h2._element.rPr.rFonts.set(qn("w:eastAsia"), "黑体")
+        h2.font.size = Pt(12.5)
+        h2.font.color.rgb = RGBColor(56, 81, 112)
+        h2.paragraph_format.space_before = Pt(5)
+        h2.paragraph_format.space_after = Pt(6)
+        h2.paragraph_format.keep_with_next = True
+
+        h3 = doc.styles["Heading 3"]
+        h3.font.name = "黑体"
+        h3._element.rPr.rFonts.set(qn("w:eastAsia"), "黑体")
+        h3.font.size = Pt(11.2)
+        h3.font.color.rgb = RGBColor(80, 94, 109)
+        h3.paragraph_format.space_before = Pt(4)
+        h3.paragraph_format.space_after = Pt(4)
+        h3.paragraph_format.keep_with_next = True
+
+        if "ReportBody" not in doc.styles:
+            style = doc.styles.add_style("ReportBody", WD_STYLE_TYPE.PARAGRAPH)
+            style.base_style = doc.styles["Normal"]
+        report_body = doc.styles["ReportBody"]
+        report_body.font.name = "宋体"
+        report_body._element.rPr.rFonts.set(qn("w:eastAsia"), "宋体")
+        report_body.font.size = Pt(10.5)
+        report_body.paragraph_format.first_line_indent = Cm(0.74)
+        report_body.paragraph_format.line_spacing = 1.35
+        report_body.paragraph_format.space_after = Pt(6)
+
+        if "FigureCaption" not in doc.styles:
+            style = doc.styles.add_style("FigureCaption", WD_STYLE_TYPE.PARAGRAPH)
+            style.base_style = doc.styles["Normal"]
+        caption = doc.styles["FigureCaption"]
+        caption.font.name = "宋体"
+        caption._element.rPr.rFonts.set(qn("w:eastAsia"), "宋体")
+        caption.font.size = Pt(9)
+        caption.font.color.rgb = RGBColor(92, 103, 125)
+        caption.paragraph_format.first_line_indent = Cm(0)
+        caption.paragraph_format.line_spacing = 1.15
+        caption.paragraph_format.space_before = Pt(2)
+        caption.paragraph_format.space_after = Pt(7)
+
+        if "TOCLine1" not in doc.styles:
+            style = doc.styles.add_style("TOCLine1", WD_STYLE_TYPE.PARAGRAPH)
+            style.base_style = doc.styles["Normal"]
+            style.paragraph_format.tab_stops.add_tab_stop(usable_width, WD_TAB_ALIGNMENT.RIGHT, WD_TAB_LEADER.DOTS)
+        toc1 = doc.styles["TOCLine1"]
+        toc1.font.name = "宋体"
+        toc1._element.rPr.rFonts.set(qn("w:eastAsia"), "宋体")
+        toc1.font.size = Pt(11)
+        toc1.paragraph_format.first_line_indent = Cm(0)
+        toc1.paragraph_format.left_indent = Cm(0)
+        toc1.paragraph_format.space_after = Pt(4)
+
+        if "TOCLine2" not in doc.styles:
+            style = doc.styles.add_style("TOCLine2", WD_STYLE_TYPE.PARAGRAPH)
+            style.base_style = doc.styles["Normal"]
+            style.paragraph_format.tab_stops.add_tab_stop(usable_width, WD_TAB_ALIGNMENT.RIGHT, WD_TAB_LEADER.DOTS)
+        toc2 = doc.styles["TOCLine2"]
+        toc2.font.name = "宋体"
+        toc2._element.rPr.rFonts.set(qn("w:eastAsia"), "宋体")
+        toc2.font.size = Pt(10.5)
+        toc2.paragraph_format.left_indent = Cm(0.7)
+        toc2.paragraph_format.first_line_indent = Cm(0)
+        toc2.paragraph_format.space_after = Pt(2)
+
+    def _add_footer_page_number(self, doc) -> None:
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        from docx.oxml import OxmlElement
+        from docx.oxml.ns import qn
+        from docx.shared import Pt
+
+        footer = doc.sections[0].footer
+        p = footer.paragraphs[0]
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+        run = p.add_run()
+        run.font.name = "宋体"
+        run.font.size = Pt(9)
+
+        fld_begin = OxmlElement("w:fldChar")
+        fld_begin.set(qn("w:fldCharType"), "begin")
+        instr = OxmlElement("w:instrText")
+        instr.set(qn("xml:space"), "preserve")
+        instr.text = " PAGE "
+        fld_sep = OxmlElement("w:fldChar")
+        fld_sep.set(qn("w:fldCharType"), "separate")
+        result = OxmlElement("w:t")
+        result.text = "1"
+        fld_end = OxmlElement("w:fldChar")
+        fld_end.set(qn("w:fldCharType"), "end")
+
+        run._r.append(fld_begin)
+        run._r.append(instr)
+        run._r.append(fld_sep)
+        run._r.append(result)
+        run._r.append(fld_end)
+
+    def _render_static_toc_docx(self, doc) -> None:
+        for line in self._build_toc_entries():
+            style = "TOCLine1" if line["level"] == 1 else "TOCLine2"
+            paragraph = doc.add_paragraph(style=style)
+            paragraph.add_run(line["label"])
+            paragraph.add_run("\t")
+            paragraph.add_run(str(line["page"]))
+
+    def _render_section_docx(self, doc, section_data: Dict[str, Any]) -> None:
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        from docx.shared import Cm
+
+        doc.add_paragraph(section_data["heading"], style="Heading 1")
+        for block in section_data["blocks"]:
+            kind = block["type"]
+            if kind == "heading2":
+                doc.add_paragraph(block["text"], style="Heading 2")
+            elif kind == "heading3":
+                doc.add_paragraph(block["text"], style="Heading 3")
+            elif kind == "paragraph":
+                doc.add_paragraph(block["text"], style="ReportBody")
+            elif kind == "bullets":
+                for item in block["items"]:
+                    doc.add_paragraph(item, style="List Bullet")
+            elif kind == "numbered":
+                for item in block["items"]:
+                    doc.add_paragraph(item, style="List Number")
+            elif kind == "image":
+                image_path = self.run_dir / block["path"]
+                if image_path.exists():
+                    doc.add_picture(str(image_path), width=Cm(14.6))
+                    doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    cap = doc.add_paragraph(block["caption"], style="FigureCaption")
+                    cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            elif kind == "page_break":
+                doc.add_page_break()
+
+    # ==================================================================
+    # PDF rendering helper
+    # ==================================================================
+
+    def _render_pdf_toc_flowables(self, styles) -> List[Any]:
+        from reportlab.lib import colors
+        from reportlab.platypus import Flowable, Spacer
+
+        class _TOCLeaderLine(Flowable):
+            def __init__(self, label: str, page: int, *, level: int) -> None:
+                super().__init__()
+                self.label = label
+                self.page = str(page)
+                self.level = level
+                self.font_name = styles["RptTOC1"].fontName
+                self.font_size = 10.8 if level == 1 else 10
+                self.leading = 20 if level == 1 else 18
+                self.indent = 14 if level == 2 else 0
+                self.text_color = colors.black
+                self.dot_color = colors.HexColor("#667085")
+                self._available_width = 0
+
+            def wrap(self, availWidth, availHeight):
+                self._available_width = availWidth
+                return availWidth, self.leading
+
+            def draw(self):
+                canvas = self.canv
+                baseline = 5
+                page_width = canvas.stringWidth(self.page, self.font_name, self.font_size)
+
+                canvas.setFont(self.font_name, self.font_size)
+                canvas.setFillColor(self.text_color)
+                canvas.drawString(self.indent, baseline, self.label)
+                canvas.drawRightString(self._available_width, baseline, self.page)
+
+                label_width = canvas.stringWidth(self.label, self.font_name, self.font_size)
+                start = self.indent + label_width + 8
+                end = self._available_width - page_width - 8
+                if end <= start:
+                    return
+
+                canvas.setFillColor(self.dot_color)
+                dot_width = canvas.stringWidth(".", self.font_name, self.font_size)
+                x = start
+                while x < end:
+                    canvas.drawString(x, baseline, ".")
+                    x += max(dot_width + 1.2, 3)
+
+        flowables: List[Any] = []
+        for entry in self._build_toc_entries(output_format="pdf"):
+            flowables.append(_TOCLeaderLine(entry["label"], entry["page"], level=entry["level"]))
+        if flowables:
+            flowables.append(Spacer(1, 6))
+        return flowables
+
+    def _render_pdf_block(self, block: Dict[str, Any], styles, base_dir: Path) -> List[Any]:
+        from reportlab.lib.units import cm
+        from reportlab.platypus import Image, KeepTogether, PageBreak, Paragraph, Spacer
+
+        flowables: List[Any] = []
+        kind = block["type"]
+        if kind == "heading2":
+            flowables.append(Paragraph(self._escape(block["text"]), styles["RptH2"]))
+        elif kind == "heading3":
+            flowables.append(Paragraph(self._escape(block["text"]), styles["RptH3"]))
+        elif kind == "paragraph":
+            flowables.append(Paragraph(self._escape(block["text"]), styles["RptBody"]))
+        elif kind == "bullets":
+            for item in block["items"]:
+                flowables.append(Paragraph(self._escape(f"- {item}"), styles["RptBullet"]))
+            flowables.append(Spacer(1, 0.08 * cm))
+        elif kind == "numbered":
+            for index, item in enumerate(block["items"], 1):
+                flowables.append(Paragraph(self._escape(f"{index}. {item}"), styles["RptNumber"]))
+            flowables.append(Spacer(1, 0.08 * cm))
+        elif kind == "image":
+            image_path = base_dir / block["path"]
+            if image_path.exists():
+                image = Image(str(image_path))
+                image._restrictSize(14.8 * cm, 8.7 * cm)
+                image.hAlign = "CENTER"
+                caption = Paragraph(self._escape(block["caption"]), styles["RptCaption"])
+                flowables.append(KeepTogether([image, caption, Spacer(1, 0.08 * cm)]))
+        elif kind == "page_break":
+            flowables.append(PageBreak())
+        return flowables
+
+    # ==================================================================
+    # Section builders
+    # ==================================================================
+
+    def _section_exec_summary(self) -> List[Dict[str, Any]]:
         meta = self.data_profile.get("meta", {})
-        n_rows = meta.get("n_rows", "?")
-
-        # 粒度信息
-        gran_note = ""
-        if self.granularity:
-            ent = self.granularity.get("entity_description", "")
-            if ent:
-                gran_note = f"（{ent}）"
-        lines.append(f"本报告基于 **{n_rows}** 条数据记录{gran_note}。")
-
-        # 显著结果统计
-        sig = self._extract_significant_results()
-        total_sig = len(sig.get("hypothesis", [])) + len(sig.get("anova", [])) + len(sig.get("chi_square", []))
-
-        if total_sig > 0:
-            lines.append(f"共发现 **{total_sig}** 个统计显著结果（p<0.05），涵盖组间差异、分类关联和分布特征。")
-        else:
-            lines.append("本次分析未发现统计显著（p<0.05）的结果，以下基于描述性统计和探索性分析。")
-
-        # 验证得分
-        val_score = self.validation_result.get("meta", {}).get("score")
-        if val_score is not None:
-            val_pass = self.validation_result.get("meta", {}).get("overall_pass", False)
-            status = "✅" if val_pass else "⚠️"
-            lines.append(f"合规性: {status} {val_score}/100")
-
-        lines.extend(["", "---", ""])
-        return lines
-
-    def _render_toc(self) -> List[str]:
-        lines = ["## 目录", ""]
-        for i, chapter in enumerate(self.CHAPTERS, 1):
-            lines.append(f"{i}. [{chapter}](#{chapter.replace('、', '').replace(' ', '-')})")
-        lines.append(f"8. [附录：合规性验证报告](#附录合规性验证报告)")
-        lines.extend(["", "---", ""])
-        return lines
-
-    # ==================================================================
-    # 第一章：数据来源与分析目标
-    # ==================================================================
-
-    def _render_chapter_1(self) -> List[str]:
-        profile_meta = self.data_profile.get("meta", {})
-        n_rows = profile_meta.get("n_rows", "未知")
-        n_cols = profile_meta.get("n_columns", "未知")
-
-        lines = [
-            "# 一、数据来源与分析目标",
-            "",
-            "## 1.1 数据来源",
-            "",
-        ]
-
-        if self.is_education:
-            lines.append(f"本报告所分析的数据来源于课程问卷调研，共收集有效样本 **{n_rows}** 份，"
-                         f"涵盖 **{n_cols}** 个调查维度。")
-        elif self.granularity:
-            lines.append(f"本报告基于 **{n_rows}** 条数据记录进行分析。")
-            lines.append(f"**数据粒度**：{self.granularity.get('entity_description', '明细行')}")
-            lines.append(f"**唯一订单数**：{self.granularity.get('unique_order_ids', '未知')}")
-            lines.append(f"**唯一客户数**：{self.granularity.get('unique_customer_ids', '未知')}")
-        else:
-            lines.append(f"本报告基于 **{n_rows}** 条数据记录、**{n_cols}** 个字段进行分析。")
-
-        lines.extend([
-            "",
-            "## 1.2 分析目标",
-            "",
-        ])
-
-        if self.user_requirement:
-            lines.append(f"核心目标：**{self.user_requirement}**。")
-        else:
-            lines.append("核心目标：对数据进行探索型统计分析，发现模式、诊断问题、提出改进建议。")
-
-        lines.extend([
-            "",
-            f"共执行 **{len(self.valid_tasks)}** 项统计分析任务，涵盖以下方法：",
-            "",
-        ])
-
-        method_counts: Dict[str, int] = {}
-        for task in self.valid_tasks:
-            m = task.get("method", "其他")
-            method_counts[m] = method_counts.get(m, 0) + 1
-        for method, count in sorted(method_counts.items(), key=lambda x: -x[1]):
-            lines.append(f"- **{method}**：{count} 项")
-
-        lines.extend(["", "---", ""])
-        return lines
-
-    # ==================================================================
-    # 第二章：数据概况与预处理
-    # ==================================================================
-
-    def _render_chapter_2(self) -> List[str]:
-        profile_meta = self.data_profile.get("meta", {})
-        overview = self.data_profile.get("overview", {})
-        fields = self.data_profile.get("fields", [])
-
-        n_rows = profile_meta.get("n_rows", "?")
-        n_cols = profile_meta.get("n_columns", "?")
-        total_missing_pct = profile_meta.get("total_missing_pct", 0)
-        missing = profile_meta.get("total_missing", 0)
-        field_types = overview.get("field_type_counts", {})
-        dup_rows = overview.get("duplicate_rows", 0)
-
-        lines = [
-            "# 二、数据概况与预处理",
-            "",
-            "## 2.1 数据概览",
-            "",
-            f"| 指标 | 数值 |",
-            f"|------|------|",
-            f"| 总行数 | {n_rows} |",
-            f"| 总列数 | {n_cols} |",
-            f"| 总缺失值 | {missing} |",
-            f"| 总体缺失率 | {total_missing_pct:.2f}% |",
-            f"| 重复行数 | {dup_rows} |",
-            "",
-            "## 2.2 字段类型分布",
-            "",
-            "| 类型 | 数量 |",
-            "|------|------|",
-        ]
-        for ftype, count in sorted(field_types.items(), key=lambda x: -x[1]):
-            type_labels = {
-                "numeric_continuous": "连续数值型",
-                "numeric_discrete": "离散数值型",
-                "categorical": "分类型",
-                "datetime": "日期时间型",
-                "text": "文本型",
-                "unknown": "未知类型",
-            }
-            lines.append(f"| {type_labels.get(ftype, ftype)} | {count} |")
-
-        lines.extend([
-            "",
-            "## 2.3 字段详细信息",
-            "",
-            "| 序号 | 字段名 | 推断类型 | 有效值数 | 缺失数 | 缺失率 | 唯一值数 |",
-            "|------|--------|----------|----------|--------|--------|----------|",
-        ])
-
-        for i, field in enumerate(fields, 1):
-            col = field.get("column", "?")
-            display_name = clean_field_name(col)
-            inferred = field.get("inferred_type", "?")
-            count = field.get("count", "?")
-            miss = field.get("missing", 0)
-            miss_pct = field.get("missing_pct", 0)
-            unique = field.get("unique", "?")
-
-            type_labels_short = {
-                "numeric_continuous": "连续数值",
-                "numeric_discrete": "离散数值",
-                "categorical": "分类",
-                "datetime": "日期时间",
-                "text": "文本",
-            }
-            type_label = type_labels_short.get(inferred, inferred)
-
-            # 高缺失率标红提示
-            warning = " ⚠️" if isinstance(miss_pct, (int, float)) and miss_pct > 30 else ""
-            lines.append(
-                f"| {i} | {display_name} | {type_label} | {count} | {miss} | "
-                f"{miss_pct:.1f}%{warning} | {unique} |"
-            )
-
-        lines.extend([
-            "",
-            "## 2.4 预处理说明",
-            "",
-            "数据预处理包括以下步骤：",
-            "",
-            "1. **编码自动识别**：自动探测 CSV 文件编码（UTF-8 → GBK → GB18030），解决中文乱码问题",
-            "2. **表头清洗**：去除字段名前后的空白字符，统一格式",
-            "3. **空行处理**：删除缺失比例超过 90% 的空行",
-            "4. **缺失值处理**：标记缺失值（NA、N/A、null、#N/A 等），在统计计算时自动排除",
-            "5. **类型推断**：基于数据特征自动推断字段类型（连续数值 / 离散数值 / 分类 / 文本 / 日期时间）",
-            "6. **异常值检测**：使用 IQR 方法标记离群值，但不自动删除，保留在原始数据中",
-            "",
-            "---",
-            "",
-        ])
-
-        return lines
-
-    # ==================================================================
-    # 第三章：描述性统计与可视化
-    # ==================================================================
-
-    def _render_chapter_3(self) -> List[str]:
-        fields = self.data_profile.get("fields", [])
-        lines = [
-            "# 三、描述性统计与可视化",
-            "",
-            "## 3.1 数值型字段描述统计",
-            "",
-        ]
-
-        numeric_fields = [f for f in fields if f.get("inferred_type", "").startswith("numeric")]
-        categorical_fields = [f for f in fields if f.get("inferred_type") == "categorical"]
-
-        # 元数据字段（不应在分类频数中详细展示）
-        _meta_columns = {"提交答卷时间", "所用时间", "来源详情", "序号"}
-
-        if numeric_fields:
-            lines.extend([
-                "| 字段名 | 样本量 | 均值 | 中位数 | 标准差 | 最小值 | 最大值 | 偏度 | 峰度 |",
-                "|--------|--------|------|--------|--------|--------|--------|------|------|",
-            ])
-            for field in numeric_fields:
-                stats = field.get("stats", {})
-                if not stats or "error" in field:
-                    continue
-                col = field.get("column", "?")
-                display_name = clean_field_name(col)
-                # 兼容新旧 stats 键名
-                n = stats.get("n", stats.get("n_total", "?"))
-                mean = self._fmt(stats.get("mean"))
-                median = self._fmt(stats.get("median"))
-                std = self._fmt(stats.get("std"))
-                vmin = self._fmt(stats.get("min"))
-                vmax = self._fmt(stats.get("max"))
-                skew = self._fmt(stats.get("skewness"))
-                kurt = self._fmt(stats.get("kurtosis"))
-                lines.append(
-                    f"| {display_name} | {n} | {mean} | {median} | {std} | "
-                    f"{vmin} | {vmax} | {skew} | {kurt} |"
-                )
-            lines.append("")
-        else:
-            lines.append("*无连续数值型字段可供描述统计。*")
-            lines.append("")
-
-        # 分类字段频数分布（跳过元数据字段，最多展示 8 个）
-        if categorical_fields:
-            lines.extend([
-                "## 3.2 分类型字段频数分布",
-                "",
-            ])
-            shown = 0
-            for field in categorical_fields:
-                col = field.get("column", "?")
-                display_name = clean_field_name(col)
-                # 跳过元数据和技术ID字段
-                if col in _meta_columns:
-                    continue
-                if shown >= 8:
-                    break
-                stats = field.get("stats", {})
-                freq = stats.get("frequency_distribution", {})
-
-                lines.append(f"### {display_name}")
-                lines.append("")
-                lines.append("| 类别 | 频数 | 占比 |")
-                lines.append("|------|------|------|")
-
-                for cat, info in list(freq.items())[:10]:  # 最多10个类别
-                    lines.append(
-                        f"| {cat} | {info.get('count', '?')} | "
-                        f"{info.get('pct', 0):.1f}% |"
-                    )
-                lines.append("")
-                shown += 1
-
-        # 图表展示
-        lines.extend([
-            "## 3.3 可视化图表",
-            "",
-        ])
-
-        if self.chart_files:
-            for chart in self.chart_files:
-                chart_stem = Path(chart).stem
-                desc = self.CHART_LABELS.get(chart_stem, chart_stem)
-                lines.append(f"### {desc}")
-                lines.append("")
-                lines.append(f"![{desc}]({chart})")
-                lines.append("")
-
-            # 图表解读
-            lines.extend([
-                "### 图表解读说明",
-                "",
-                "- **柱状图**：展示分类变量的频数分布和分组均值对比，直观反映不同类别的样本量和平均水平差异",
-                "- **箱线图**：展示数值变量的分布特征（中位数、四分位数、范围），并标记离群值",
-                "- **散点图**：展示两个数值变量之间的关系形态，含回归趋势线和 Pearson 相关系数",
-                "- **相关性热力图**：以颜色深浅展示多个数值变量之间的相关强度和方向",
-                "",
-            ])
-        else:
-            lines.append("*未生成可视化图表（可能因为数据中无数值列或样本量不足）。*")
-            lines.append("")
-
-        lines.extend(["---", ""])
-        return lines
-
-    # ==================================================================
-    # 第四章：统计推断分析（仅显著结果）
-    # ==================================================================
-
-    def _render_chapter_4(self) -> List[str]:
-        sig = self._extract_significant_results()
-        lines = [
-            "# 四、统计推断分析",
-            "",
-            "> 本章仅展示 **p < 0.05** 的统计显著结果。完整的统计结果请参见 `stats_results.json`。",
-            "",
-        ]
-
-        # 点估计摘要
-        lines.extend(self._render_point_estimation_section())
-
-        # 区间估计摘要
-        lines.extend(self._render_interval_estimation_section())
-
-        # 假设检验显著结果
-        lines.extend(self._render_significant_hypothesis_tests(sig.get("hypothesis", [])))
-
-        # ANOVA 显著结果
-        lines.extend(self._render_significant_anova(sig.get("anova", [])))
-
-        # 卡方检验显著结果
-        lines.extend(self._render_significant_chi_square(sig.get("chi_square", [])))
-
-        # 分布检验结果
-        lines.extend(self._render_distribution_tests())
-
-        lines.extend(["---", ""])
-        return lines
-
-    def _render_point_estimation_section(self) -> List[str]:
-        pe = self.stats_results.get("point_estimation", {}).get("fields", {})
-        if not pe:
-            return ["## 4.1 点估计", "", "*无点估计数据。*", ""]
-
-        lines = [
-            "## 4.1 点估计",
-            "",
-            f"共对 **{len(pe)}** 个数值列执行了点估计，每列计算 10 个参数（均值、方差、标准差、偏度、峰度、变异系数、中位数、IQR、极差、标准误）。",
-            "",
-            "| 字段 | 样本量 | 均值 | 标准差 | 中位数 | IQR | 偏度 | 峰度 | 变异系数(%) |",
-            "|------|--------|------|--------|--------|-----|------|------|-------------|",
-        ]
-        for col, info in pe.items():
-            if not isinstance(info, dict) or "error" in info:
-                continue
-            display_name = clean_field_name(col)
-            n = info.get("n", "?")
-            mean = self._fmt(info.get("mean"))
-            std = self._fmt(info.get("std"))
-            med = self._fmt(info.get("median"))
-            iqr = self._fmt(info.get("iqr"))
-            skew = self._fmt(info.get("skewness"))
-            kurt = self._fmt(info.get("kurtosis_excess"))
-            cv = f"{info['cv_pct']:.1f}" if info.get("cv_pct") is not None else "-"
-            lines.append(
-                f"| {display_name} | {n} | {mean} | {std} | {med} | "
-                f"{iqr} | {skew} | {kurt} | {cv} |"
-            )
-        lines.append("")
-        return lines
-
-    def _render_interval_estimation_section(self) -> List[str]:
-        ie = self.stats_results.get("interval_estimation", {}).get("fields", {})
-        if not ie:
-            return ["## 4.2 区间估计", "", "*无区间估计数据。*", ""]
-
-        lines = [
-            "## 4.2 区间估计",
-            "",
-            f"共对 **{len(ie)}** 个数值列执行了 95% 置信水平的区间估计，每列计算 5 类置信区间。",
-            "",
-            "| 字段 | 样本量 | 均值 95% CI | 标准差 95% CI |",
-            "|------|--------|-------------|---------------|",
-        ]
-        for col, info in ie.items():
-            if not isinstance(info, dict) or "error" in info:
-                continue
-            display_name = clean_field_name(col)
-            n = info.get("n", "?")
-            mean_ci = info.get("mean_ci")
-            std_ci = info.get("std_ci")
-            mean_ci_str = f"[{mean_ci[0]:.4f}, {mean_ci[1]:.4f}]" if mean_ci and len(mean_ci) == 2 else "-"
-            std_ci_str = f"[{std_ci[0]:.4f}, {std_ci[1]:.4f}]" if std_ci and len(std_ci) == 2 else "-"
-            lines.append(f"| {display_name} | {n} | {mean_ci_str} | {std_ci_str} |")
-        lines.append("")
-        return lines
-
-    def _render_significant_hypothesis_tests(self, sig_tests: List[Dict]) -> List[str]:
-        lines = [
-            "## 4.3 假设检验（仅显著结果）",
-            "",
-        ]
-
-        if not sig_tests:
-            lines.append("*无统计显著的假设检验结果。*")
-            lines.append("")
-            return lines
-
-        lines.extend([
-            f"共发现 **{len(sig_tests)}** 个统计显著的假设检验结果：",
-            "",
-            "| # | 方法 | 变量/对比 | 统计量 | p 值 | 结论 |",
-            "|---|------|-----------|--------|------|------|",
-        ])
-
-        for i, item in enumerate(sig_tests, 1):
-            method = item.get("method", "?")
-            var_info = item.get("variables", item.get("column", "?"))
-            stat = self._fmt(item.get("statistic"))
-            p_val = item.get("p_value", "?")
-            p_str = f"**{p_val:.4f}**" if isinstance(p_val, (int, float)) else str(p_val)
-
-            # 构造结论
-            if isinstance(p_val, (int, float)):
-                if p_val < 0.01:
-                    conclusion = "差异极显著（p < 0.01）"
-                elif p_val < 0.05:
-                    conclusion = "差异显著（p < 0.05）"
-                else:
-                    conclusion = f"不显著（p = {p_val:.4f}）"
-            else:
-                conclusion = "-"
-
-            lines.append(f"| {i} | {method} | {var_info} | {stat} | {p_str} | {conclusion} |")
-
-        lines.append("")
-        return lines
-
-    def _render_significant_anova(self, sig_anova: List[Dict]) -> List[str]:
-        lines = [
-            "## 4.4 方差分析（仅显著结果）",
-            "",
-        ]
-
-        if not sig_anova:
-            lines.append("*无统计显著的 ANOVA 结果。*")
-            lines.append("")
-            return lines
-
-        lines.extend([
-            f"共发现 **{len(sig_anova)}** 个统计显著的 ANOVA 结果：",
-            "",
-            "| # | 因变量 | 因子 | 组数 | F 值 | p 值 | 结论 |",
-            "|---|--------|------|------|------|------|------|",
-        ])
-
-        for i, item in enumerate(sig_anova, 1):
-            dep = item.get("dependent", "?")
-            factor = item.get("factor", "?")
-            n_groups = item.get("n_groups", "?")
-            f_stat = self._fmt(item.get("F_statistic"))
-            p_val = item.get("p_value", "?")
-            p_str = f"**{p_val:.4f}**" if isinstance(p_val, (int, float)) else str(p_val)
-            conclusion = f"{factor}对{dep}存在显著主效应（p = {p_str}）"
-
-            lines.append(f"| {i} | {dep} | {factor} | {n_groups} | {f_stat} | {p_str} | {conclusion} |")
-
-            # 如果有 Tukey HSD 事后检验结果，简要说明
-            tukey = item.get("tukey_hsd")
-            if tukey:
-                lines.append(f"| | | > 事后检验（Tukey HSD）已执行，详情见 `stats_results.json` |")
-        lines.append("")
-        return lines
-
-    def _render_significant_chi_square(self, sig_chi: List[Dict]) -> List[str]:
-        lines = [
-            "## 4.5 卡方检验（仅显著结果）",
-            "",
-        ]
-
-        if not sig_chi:
-            lines.append("*无统计显著的卡方检验结果。*")
-            lines.append("")
-            return lines
-
-        lines.extend([
-            f"共发现 **{len(sig_chi)}** 个统计显著的卡方检验结果：",
-            "",
-            "| # | 检验变量 | χ² 值 | 自由度 | p 值 | 结论 |",
-            "|---|----------|-------|--------|------|------|",
-        ])
-
-        for i, item in enumerate(sig_chi, 1):
-            var_info = item.get("variables", item.get("column", "?"))
-            chi2 = self._fmt(item.get("chi2_statistic"))
-            df = item.get("df", "?")
-            p_val = item.get("p_value", "?")
-            p_str = f"**{p_val:.4f}**" if isinstance(p_val, (int, float)) else str(p_val)
-
-            if isinstance(p_val, (int, float)) and p_val < 0.05:
-                conclusion = "各类别分布存在显著差异"
-            else:
-                conclusion = f"不显著"
-
-            lines.append(f"| {i} | {var_info} | {chi2} | {df} | {p_str} | {conclusion} |")
-        lines.append("")
-        return lines
-
-    def _render_distribution_tests(self) -> List[str]:
-        dist = self.stats_results.get("distribution_tests", {}).get("tests", {})
-        if not dist:
-            return ["## 4.6 分布检验", "", "*无分布检验数据。*", ""]
-
-        lines = [
-            "## 4.6 分布检验（正态性检验）",
-            "",
-            "| 字段 | 样本量 | Shapiro-Wilk W | Shapiro-Wilk p | D'Agostino χ² | D'Agostino p | 正态性 |",
-            "|------|--------|----------------|----------------|----------------|---------------|--------|",
-        ]
-
-        for col, info in dist.items():
-            if not isinstance(info, dict) or "error" in info:
-                continue
-            display_name = clean_field_name(col)
-            n = info.get("n", "?")
-
-            sw = info.get("shapiro_wilk", {})
-            sw_stat = self._fmt(sw.get("statistic")) if isinstance(sw, dict) else "-"
-            sw_p = sw.get("p_value") if isinstance(sw, dict) else None
-            sw_p_str = f"{sw_p:.4f}" if isinstance(sw_p, (int, float)) else "-"
-
-            dp = info.get("dagostino_pearson", {})
-            dp_stat = self._fmt(dp.get("statistic")) if isinstance(dp, dict) else "-"
-            dp_p = dp.get("p_value") if isinstance(dp, dict) else None
-            dp_p_str = f"{dp_p:.4f}" if isinstance(dp_p, (int, float)) else "-"
-
-            # 正态性判断
-            if isinstance(sw_p, (int, float)) and isinstance(dp_p, (int, float)):
-                if sw_p >= 0.05 and dp_p >= 0.05:
-                    normality = "✅ 正态"
-                elif sw_p < 0.05 or dp_p < 0.05:
-                    normality = "⚠️ 非正态"
-                else:
-                    normality = "-"
-            else:
-                normality = "-"
-
-            lines.append(
-                f"| {display_name} | {n} | {sw_stat} | {sw_p_str} | "
-                f"{dp_stat} | {dp_p_str} | {normality} |"
-            )
-
-        lines.extend([
-            "",
-            "> **说明**：Shapiro-Wilk 检验适用于样本量 3 ≤ n ≤ 5000，" "",
-            "> D'Agostino-Pearson 检验适用于较大样本量。",
-            "> 标注 ⚠️ 的字段分布显著偏离正态，分析时应优先使用非参数方法（如 Wilcoxon、Mann-Whitney U）。",
-            "",
-        ])
-        return lines
-
-    # ==================================================================
-    # 第五章（业务模块分析）
-    # ==================================================================
-
-    def _render_chapter_5_business(self) -> List[str]:
-        """渲染业务模块分析章节（零售等非教育域）。"""
-        lines = [
-            "# 五、业务模块分析",
-            "",
-        ]
-
-        has_content = False
-
-        # 5.1 数据粒度
-        if self.granularity:
-            has_content = True
-            lines.extend([
-                "## 5.1 数据粒度与实体识别",
-                "",
-                f"- **行级实体**：{self.granularity.get('entity_description', '未知')}",
-                f"- **总记录数**：{self.granularity.get('row_count', '?')}",
-                f"- **唯一订单数**：{self.granularity.get('unique_order_ids', '?')}",
-                f"- **唯一客户数**：{self.granularity.get('unique_customer_ids', '?')}",
-                f"- **唯一产品数**：{self.granularity.get('unique_product_ids', '?')}",
-                "",
-                "> ⚠️ **重要**：以下所有比率分析均已明确分母。亏损明细率 ≠ 亏损订单率 ≠ 亏损客户率。",
-                "",
-            ])
-
-        # 5.2 亏损驱动分析
-        loss = self.loss_driver
-        if loss and loss.get("is_viable"):
-            has_content = True
-            lines.extend([
-                "## 5.2 亏损驱动分析",
-                "",
-            ])
-
-            # 总体指标
-            ov = loss.get("overall_summary", {})
-            if ov:
-                lines.extend([
-                    "| 指标 | 数值 |",
-                    "|------|------|",
-                    f"| 总销售额 | {ov.get('total_sales', '?'):,.2f} |",
-                    f"| 总利润 | {ov.get('total_profit', '?'):,.2f} |",
-                    f"| 总体亏损率（明细行） | {ov.get('overall_loss_rate', 0)*100:.2f}% |",
-                    f"| 总体利润率 | {ov.get('overall_profit_margin', '?'):.2f}% |",
-                    "",
-                ])
-
-            # 主要亏损来源（合并所有维度）
-            top_contributors = loss.get("top_loss_contributors", [])
-            if top_contributors:
-                lines.extend([
-                    "### 主要亏损来源（按亏损贡献率排序）",
-                    "",
-                    "| 维度 | 分类 | 销售额 | 利润 | 利润率 | 亏损率 | 亏损金额 | 亏损贡献% | 平均折扣 |",
-                    "|------|------|--------|------|--------|--------|----------|-----------|----------|",
-                ])
-                for item in top_contributors[:10]:
-                    dim = item.get("dimension_display", "")
-                    name = item.get("name", "")
-                    sales = item.get("total_sales", 0)
-                    profit = item.get("total_profit", 0)
-                    margin = item.get("profit_margin", 0)
-                    loss_rate = item.get("loss_rate", 0) * 100
-                    loss_amt = item.get("loss_amount", 0)
-                    loss_pct = item.get("loss_contribution_pct", 0)
-                    avg_disc = item.get("avg_discount", 0)
-                    disc_str = f"{avg_disc*100:.1f}%" if avg_disc else "-"
-                    lines.append(
-                        f"| {dim} | {name} | {sales:,.0f} | {profit:,.0f} | "
-                        f"{margin:.1f}% | {loss_rate:.1f}% | {loss_amt:,.0f} | "
-                        f"{loss_pct:.1f}% | {disc_str} |"
-                    )
-                lines.append("")
-
-                # 亏损集中度摘要
-                dim_results = loss.get("dimension_results", {})
-                for dim_name, dim_result in dim_results.items():
-                    if isinstance(dim_result, dict) and "summary" in dim_result:
-                        summary = dim_result["summary"]
-                        name = summary.get("largest_loss_contributor", {})
-                        if name:
-                            lines.append(
-                                f"- **{dim_result.get('dimension_display', dim_name)}**："
-                                f"最大亏损来源为「{name.get('name', '?')}」"
-                                f"（亏损贡献 {name.get('loss_contribution_pct', 0):.1f}%），"
-                                f"{summary.get('loss_concentration', '')}"
-                            )
-                lines.append("")
-
-        # 5.3 折扣响应分析
-        disc = self.discount_analysis
-        if disc and disc.get("is_viable"):
-            has_content = True
-            lines.extend([
-                "## 5.3 折扣响应分析",
-                "",
-            ])
-
-            # 总体折扣统计
-            ov = disc.get("overall_summary", {})
-            if ov:
-                lines.extend([
-                    f"- 平均折扣率：{ov.get('mean_discount', 0)*100:.1f}%",
-                    f"- 中位数折扣率：{ov.get('median_discount', 0)*100:.1f}%",
-                    f"- 打折交易占比：{ov.get('discount_rate', 0)*100:.1f}%",
-                    "",
-                ])
-
-            # 折扣分箱
-            bins = disc.get("discount_bins", {}).get("bins", [])
-            if bins:
-                lines.extend([
-                    "### 折扣分箱分析",
-                    "",
-                    "| 折扣区间 | 交易数 | 总销售额 | 平均销售额 | 总利润 | 平均利润 |",
-                    "|----------|--------|----------|------------|--------|----------|",
-                ])
-                for b in bins:
-                    lines.append(
-                        f"| {b.get('bin', '?')} | {b.get('count', 0)} | "
-                        f"{b.get('total_sales', 0):,.0f} | {b.get('avg_sales', 0):,.0f} | "
-                        f"{b.get('total_profit', 0):,.0f} | {b.get('avg_profit', 0):,.0f} |"
-                    )
-                lines.append("")
-
-            # 利润率阈值
-            tp = disc.get("profit_tipping_point", {})
-            if tp and tp.get("tipping_bin"):
-                lines.extend([
-                    "### 折扣阈值分析",
-                    "",
-                    f"**{tp.get('description', '')}**",
-                    "",
-                ])
-
-            # 异常检测
-            anomalies = disc.get("anomalies", {})
-            if anomalies and anomalies.get("anomaly_count", 0) > 0:
-                lines.extend([
-                    "### 高折扣异常检测",
-                    "",
-                    f"{anomalies.get('summary', '')}",
-                    "",
-                ])
-
-        # 5.4 集中度与帕累托分析
-        pareto = self.pareto_results
-        if pareto and pareto.get("is_viable"):
-            has_content = True
-            lines.extend([
-                "## 5.4 集中度与帕累托分析",
-                "",
-            ])
-
-            for key in ["product_concentration", "customer_concentration", "subcategory_concentration"]:
-                conc = pareto.get(key, {})
-                if not conc or "error" in conc:
-                    continue
-                label = conc.get("label", key)
-                metrics = conc.get("concentration_metrics", {})
-                lines.extend([
-                    f"### {label}集中度",
-                    "",
-                    f"- 前5个{label}贡献: **{metrics.get('top5_pct', 0):.1f}%** 的销售额",
-                    f"- 前20%的{label}贡献: **{metrics.get('top20_pct', 0):.1f}%**",
-                    f"- 覆盖80%销售额需要: **{metrics.get('items_needed_for_80pct', '?')}** 个{label}",
-                    f"  （占全部{conc.get('total_items', '?')}个{label}的{metrics.get('pct_items_for_80pct', 0):.1f}%）",
-                    "",
-                ])
-                # Top-N表
-                top_items = conc.get("top_items", [])[:10]
-                if top_items:
-                    lines.extend([
-                        "| 排名 | 名称 | 销售额 | 占总比% | 累计% | 利润 | 利润率% |",
-                        "|------|------|--------|---------|-------|------|---------|",
-                    ])
-                    for item in top_items:
-                        lines.append(
-                            f"| {item.get('rank', '?')} | {item.get('name', '?')[:30]} | "
-                            f"{item.get('total_value', 0):,.0f} | {item.get('pct_of_total', 0):.1f}% | "
-                            f"{item.get('cumulative_pct', 0):.1f}% | "
-                            f"{item.get('total_profit', 0):,.0f} | {item.get('profit_margin', 0):.1f}% |"
-                        )
-                    lines.append("")
-
-            # 异常对象
-            hs_lp = pareto.get("high_sales_low_profit", {})
-            if hs_lp and hs_lp.get("count", 0) > 0:
-                lines.extend([
-                    "### 高销售低利润商品",
-                    "",
-                    f"{hs_lp.get('summary', '')}",
-                    "",
-                ])
-
-            ls_hl = pareto.get("low_sales_high_loss", {})
-            if ls_hl and ls_hl.get("count", 0) > 0:
-                lines.extend([
-                    "### 低销售高亏损商品",
-                    "",
-                    f"{ls_hl.get('summary', '')}",
-                    "",
-                ])
-
-        # 5.5 交叉维度分析
-        cross = self.cross_dim_results
-        if cross and cross.get("is_viable"):
-            combos = cross.get("combinations", [])
-            if combos:
-                has_content = True
-                lines.extend([
-                    "## 5.5 交叉维度洞察",
-                    "",
-                ])
-                for combo in combos:
-                    if "error" in combo:
-                        continue
-                    label = combo.get("label", "")
-                    n_patterns = combo.get("n_notable_patterns", 0)
-                    lines.append(f"### {label}（{n_patterns} 个显著交互模式）")
-                    patterns = combo.get("top_patterns", [])[:8]
-                    if patterns:
-                        lines.extend([
-                            "| 维度1 | 维度2 | 销售额 | 交易数 | 利润率 |",
-                            "|-------|-------|--------|--------|--------|",
-                        ])
-                        for p in patterns:
-                            lines.append(
-                                f"| {p.get('dim1', '?')} | {p.get('dim2', '?')} | "
-                                f"{p.get('total_sales', 0):,.0f} | {p.get('transaction_count', 0)} | "
-                                f"{p.get('profit_margin', 0):.1f}% |"
-                            )
-                    lines.append("")
-
-        if not has_content:
-            lines.append("*当前数据不支持业务模块分析，或业务模块分析未生成结果。*")
-            lines.append("")
-
-        lines.extend(["---", ""])
-        return lines
-
-    # ==================================================================
-    # 第五章/第六章：主要数据发现（兼容旧名称）
-    # ==================================================================
-
-    def _render_chapter_findings(self) -> List[str]:
-        """数据发现章节（域自适应标题）。"""
-        return self._render_chapter_5()
-
-    def _render_chapter_suggestions(self) -> List[str]:
-        """改进建议章节（域自适应标题）。"""
-        return self._render_chapter_6()
-
-    def _render_chapter_limitations(self) -> List[str]:
-        """局限性说明章节。"""
-        return self._render_chapter_7()
-
-    # 保留旧方法名以保证向后兼容
-    def _render_chapter_5(self) -> List[str]:
-        chapter_title = "五、课程改进建议" if self.is_education else "六、主要数据发现" if self.has_business_chapter else "五、主要数据发现"
-        lines = [
-            f"# {chapter_title}",
-            "",
-        ]
-
-        if not self.findings:
-            lines.extend([
-                "*未生成 LLM 数据发现（可能为离线模式或 findings.json 缺失）。*",
-                "",
-                "以下为基于统计结果自动提炼的显著发现：",
-                "",
-            ])
-            # 从统计结果中自动提取
-            sig = self._extract_significant_results()
-            auto_findings = []
-            for item in sig.get("hypothesis", [])[:3]:
-                auto_findings.append({
-                    "conclusion": f"{item.get('method', '')}表明{item.get('variables', '')}存在显著差异",
-                    "evidence": f"p={item.get('p_value', '?'):.4f}" if isinstance(item.get('p_value'), (int, float)) else "",
-                    "method": item.get("method", ""),
-                    "importance": 3,
-                })
-            for item in sig.get("anova", [])[:2]:
-                auto_findings.append({
-                    "conclusion": f"{item.get('factor', '')}对{item.get('dependent', '')}存在显著主效应",
-                    "evidence": f"F={item.get('F_statistic', '?')}, p={item.get('p_value', '?'):.4f}" if isinstance(item.get('p_value'), (int, float)) else "",
-                    "method": item.get("method", "方差分析"),
-                    "importance": 4,
-                })
-            self.findings = auto_findings
-
-        # 按重要性排序
-        sorted_findings = sorted(
-            self.findings,
-            key=lambda x: x.get("importance", 0) if isinstance(x.get("importance"), (int, float)) else 0,
-            reverse=True,
+        field_types = self.data_profile.get("overview", {}).get("field_type_counts", {})
+        score = self.validation_result.get("meta", {}).get("score")
+
+        summary_text = self.report_narrative.get("executive_summary") or (
+            f"本报告基于 {meta.get('n_rows', '?')} 条有效记录、{meta.get('n_columns', '?')} 个字段展开，"
+            "以主要发现、图表证据和行动建议为核心，统计过程仅保留必要的方法说明。"
         )
 
-        lines.append(f"共识别 **{len(sorted_findings)}** 条核心数据发现，按重要性从高到低排列：")
-        lines.append("")
-
-        for i, finding in enumerate(sorted_findings, 1):
-            conclusion = finding.get("conclusion", "?")
-            evidence = finding.get("evidence", "")
-            method = finding.get("method", "")
-            importance = finding.get("importance", "?")
-
-            stars = "⭐" * min(importance, 5) if isinstance(importance, int) else ""
-            lines.extend([
-                f"### 发现 {i}：{conclusion} {stars}",
-                "",
-                f"- **重要性**：{importance}/5",
-                f"- **方法**：{method}",
-                f"- **证据**：{evidence}",
-                "",
-            ])
-
-        lines.extend(["---", ""])
-        return lines
-
-    # ==================================================================
-    # 第六章：课程改进建议
-    # ==================================================================
-
-    def _render_chapter_6(self) -> List[str]:
-        chapter_title = "六、课程改进建议" if self.is_education else "七、改进建议" if self.has_business_chapter else "六、改进建议"
-        lines = [
-            f"# {chapter_title}",
-            "",
+        bullets = [
+            f"本轮对 {len(self.stats_results.get('point_estimation', {}).get('fields', {}))} 个有效数值指标完成了点估计和区间估计。",
+            f"本轮自动分析提炼出 {len(self.findings)} 条主要发现、{len(self.suggestions)} 条行动建议，并优先保留可追溯的统计证据。",
+            f"自动验证得分为 {score}/100。"
+            if score is not None
+            else "当前运行结果尚未生成自动验证得分，但统计结果和图表已完成。",
         ]
+
+        top_findings = [self._normalize_finding_text(item.get("conclusion", "")) for item in self.findings[:3]]
+
+        blocks: List[Dict[str, Any]] = [
+            {"type": "paragraph", "text": summary_text},
+            {"type": "heading2", "text": "1.1 核心关注点"},
+            {"type": "bullets", "items": bullets},
+        ]
+        if top_findings:
+            blocks.extend(
+                [
+                    {"type": "heading2", "text": "1.2 优先结论"},
+                    {"type": "numbered", "items": top_findings},
+                ]
+            )
+        return blocks
+
+    def _section_dataset_overview(self) -> List[Dict[str, Any]]:
+        meta = self.data_profile.get("meta", {})
+        overview = self.data_profile.get("overview", {})
+        duplicate_rows = overview.get("duplicate_rows", 0)
+        missing_pct = meta.get("total_missing_pct", 0)
+
+        narrative_overview = self.report_narrative.get("overview_paragraphs") or []
+        intro = (
+            f"本次分析使用 {meta.get('n_rows', '?')} 条记录和 {meta.get('n_columns', '?')} 个观察字段。"
+            f"整体缺失率为 {missing_pct:.2f}%，重复记录数为 {duplicate_rows}。"
+        )
+        focus_text = "结合统计任务与图表，本报告重点关注核心数值指标、可解释分组及其差异和关联。"
+
+        field_desc = []
+        if self.focus_fields:
+            field_desc.append("本次重点字段包括：" + "、".join(self.focus_fields[:8]) + "。")
+
+        distribution_parts = self._dataset_distribution_brief()
+
+        base_paragraphs = narrative_overview or [intro, focus_text]
+        blocks = [{"type": "paragraph", "text": paragraph} for paragraph in base_paragraphs]
+        blocks.extend({"type": "paragraph", "text": item} for item in field_desc + distribution_parts)
+        return blocks
+
+    def _section_chart_analysis(self) -> List[Dict[str, Any]]:
+        blocks: List[Dict[str, Any]] = [
+            {
+                "type": "paragraph",
+                "text": self.report_narrative.get("chart_section_intro") or "本节围绕每张图给出关键数据、主要发现与检查方法，并结合统计结果解释差异和关联。",
+            }
+        ]
+
+        if not self.chart_notes:
+            blocks.append({"type": "paragraph", "text": "当前运行结果尚未生成可用图表。"})
+            return blocks
+
+        for index, note in enumerate(self.chart_notes):
+            blocks.extend(
+                [
+                    {"type": "heading2", "text": note["heading"]},
+                    {"type": "image", "path": note["path"], "caption": note["caption"]},
+                    {"type": "heading3", "text": "关键数据"},
+                    {"type": "bullets", "items": note["key_data"]},
+                    {"type": "heading3", "text": "主要发现"},
+                    {"type": "paragraph", "text": note["finding"]},
+                    {"type": "heading3", "text": "检查方法"},
+                    {"type": "paragraph", "text": note["method"]},
+                ]
+            )
+            if index < len(self.chart_notes) - 1:
+                blocks.append({"type": "page_break"})
+        return blocks
+
+    def _section_findings(self) -> List[Dict[str, Any]]:
+        if not self.findings:
+            return [{"type": "paragraph", "text": "当前未生成可用的主要发现。"}]
+
+        blocks: List[Dict[str, Any]] = []
+        for index, finding in enumerate(self.findings[:8], 1):
+            conclusion = self._clean_report_text(self._normalize_finding_text(finding.get("conclusion", "待补充")))
+            evidence = self._clean_report_text(finding.get("evidence", "统计证据待补充"))
+            method = finding.get("method", "统计分析")
+            significance = self._significance_text_from_evidence(evidence, method)
+            blocks.extend(
+                [
+                    {"type": "heading2", "text": self._finding_heading(index, conclusion)},
+                    {"type": "paragraph", "text": conclusion},
+                    {"type": "bullets", "items": [f"关键证据：{evidence}", f"方法说明：{method}", f"结果解读：{significance}"]},
+                ]
+            )
+        return blocks
+
+    def _section_suggestions(self) -> List[Dict[str, Any]]:
+        if not self.suggestions:
+            return [{"type": "paragraph", "text": "当前未生成可用的行动建议。"}]
+
+        blocks: List[Dict[str, Any]] = [
+            {
+                "type": "paragraph",
+                "text": "以下建议均对应前文已识别出的差异、关联或集中性问题，强调证据依据、执行动作与后续观察。",
+            }
+        ]
+
+        for index, suggestion in enumerate(self.suggestions[:5], 1):
+            text = self._clean_report_text(self._ensure_sentence(suggestion.get("suggestion", "待补充")))
+            evidence = self._clean_report_text(self._normalize_finding_text(suggestion.get("evidence", "待补充")))
+            direction = self._clean_report_text(self._ensure_sentence(suggestion.get("direction", "待补充")))
+            blocks.extend(
+                [
+                    {"type": "heading2", "text": self._suggestion_heading(index, {**suggestion, "evidence": evidence})},
+                    {"type": "paragraph", "text": text},
+                    {"type": "bullets", "items": [f"对应依据：{evidence}", f"落地方向：{direction}"]},
+                ]
+            )
+        return blocks
+
+    def _section_limitations(self) -> List[Dict[str, Any]]:
+        score = self.validation_result.get("meta", {}).get("score")
+        passed = self.validation_result.get("meta", {}).get("overall_pass")
+        improvements = self.validation_result.get("improvement_suggestions", [])
+
+        limitations = self.report_narrative.get("limitations") or [
+            "本报告中的显著结果反映群体差异或变量关联，不直接代表因果关系。",
+            f"当前结论基于 {self.data_profile.get('meta', {}).get('n_rows', '?')} 条记录，外推时需结合数据覆盖范围。",
+            "日期、分类口径和异常值会影响结果解释，关键决策前应回到源数据复核。",
+        ]
+        blocks: List[Dict[str, Any]] = [
+            {"type": "heading2", "text": "6.1 使用边界"},
+            {
+                "type": "bullets",
+                "items": limitations,
+            },
+            {"type": "heading2", "text": "6.2 自动验证摘要"},
+        ]
+
+        if score is not None:
+            blocks.append(
+                {
+                    "type": "paragraph",
+                    "text": f"自动验证得分为 {score}/100，整体结果为{'通过' if passed else '未通过'}。"
+                    "验证结果表明统计链路基本可用，但在发现覆盖度、建议具体度和报告完整性方面仍有提升空间。",
+                }
+            )
+        else:
+            blocks.append({"type": "paragraph", "text": "当前未生成自动验证结果。"})
+
+        if improvements:
+            polished = [self._polish_validation_suggestion(item) for item in improvements[:4]]
+            blocks.append({"type": "bullets", "items": polished})
+        return blocks
+
+    # ==================================================================
+    # Chart notes
+    # ==================================================================
+
+    def _build_chart_notes(self) -> List[Dict[str, Any]]:
+        metadata_items = self.chart_metadata.get("charts", [])
+        metadata_map = {item.get("chart_type"): item for item in metadata_items if isinstance(item, dict)}
+
+        notes: List[Dict[str, Any]] = []
+        for path in self.chart_files:
+            stem = Path(path).stem
+            meta = metadata_map.get(stem, {})
+            notes.append(self._chart_note_from_meta(stem, path, meta))
+        return notes
+
+    def _chart_note_from_meta(self, stem: str, path: str, meta: Dict[str, Any]) -> Dict[str, Any]:
+        if not meta:
+            meta = self._fallback_chart_meta(stem, path)
+        label = self.CHART_LABELS.get(stem, stem)
+        if stem == "bar_chart":
+            group_means = meta.get("group_means", {})
+            highest_group = meta.get("highest_group")
+            lowest_group = meta.get("lowest_group")
+            source_test = meta.get("source_test", {})
+            p_value = source_test.get("p_value")
+            key_data = []
+            if highest_group:
+                key_data.append(
+                    f"{self._clean_choice(highest_group)}组的平均值最高，为 {self._fmt(meta.get('highest_mean'), 2)}；"
+                    f"{self._clean_choice(lowest_group)}组最低，为 {self._fmt(meta.get('lowest_mean'), 2)}。"
+                )
+            if group_means:
+                sample_desc = "；".join(f"{self._clean_choice(k)}={self._fmt(v, 2)}" for k, v in list(group_means.items())[:4])
+                key_data.append(f"各组均值概况为：{sample_desc}。")
+            finding = (
+                f"该图直接展示了{self._label(meta.get('factor'))}不同组别在“{self._label(meta.get('dependent'))}”上的均值差异，"
+                "便于判断哪些分组值得优先复核或采取差异化措施。"
+            )
+            if isinstance(p_value, (int, float)):
+                finding += f"对应单因素方差分析 p={p_value:.4f}，说明该差异{'达到' if p_value < 0.05 else '未达到'}统计显著水平。"
+            method = (
+                f"图中左侧给出{self._label(meta.get('factor'))}的样本数量，右侧给出各组在“{self._label(meta.get('dependent'))}”上的均值。"
+                "检查时先核对样本分布，再结合方差分析结果判断均值差异是否稳定。"
+            )
+        elif stem == "box_plot":
+            stats = meta.get("group_stats", {})
+            ordered = meta.get("ordered_groups", [])
+            source_test = meta.get("source_test", {})
+            key_data = []
+            if ordered:
+                first = ordered[0]
+                if first in stats:
+                    key_data.append(
+                        f"{self._clean_choice(first)}组的中位数较高，为 {self._fmt(stats[first].get('median'), 2)}，"
+                        f"IQR 为 {self._fmt(stats[first].get('iqr'), 2)}。"
+                    )
+                if len(ordered) > 1 and ordered[-1] in stats:
+                    last = ordered[-1]
+                    key_data.append(
+                        f"{self._clean_choice(last)}组中位数较低，为 {self._fmt(stats[last].get('median'), 2)}，"
+                        f"说明该组整体数值偏低。"
+                    )
+            finding = (
+                f"相比只看均值，这张箱线图更适合判断“{self._label(meta.get('dependent'))}”的差异是整体偏移，"
+                "还是由少量极端值拉动。当前图中不同组的中位数和四分位区间存在可见差别，说明分组分布并不相同。"
+            )
+            if source_test.get("p_value") is not None:
+                finding += f"与之对应的方差分析 p={source_test['p_value']:.4f}。"
+            method_name = source_test.get("method", "方差分析")
+            method = (
+                f"检查时重点关注中位数线、箱体宽度与离群点位置。若中位数差异明显、箱体重叠有限，"
+                f"再结合{method_name}的 p 值，可更稳健地解释群体差异。"
+            )
+        elif stem == "scatter_plot":
+            corr = meta.get("correlation")
+            key_data = [
+                f"样本量为 {meta.get('n', '?')}，"
+                f"“{self._label(meta.get('x'))}”的均值为 {self._fmt(meta.get('x_mean'), 2)}，"
+                f"“{self._label(meta.get('y'))}”的均值为 {self._fmt(meta.get('y_mean'), 2)}。"
+            ]
+            if isinstance(corr, (int, float)):
+                key_data.append(f"Pearson 相关系数为 {corr:.3f}。")
+            finding = (
+                f"散点图用于观察“{self._label(meta.get('x'))}”与“{self._label(meta.get('y'))}”是否存在同步变化。"
+                "点云若大致沿同一方向展开，说明两个数值指标具有同向或反向联动。"
+            )
+            method = (
+                "检查时先看点云是否呈现明显斜率，再看拟合线方向与 Pearson r 的正负和绝对值。"
+                "这一步更多用于确认联动趋势，而不是直接作因果解释。"
+            )
+        elif stem == "correlation_heatmap":
+            pairs = meta.get("top_pairs", [])
+            key_data = []
+            for pair in pairs[:3]:
+                key_data.append(
+                    f"“{self._label(pair.get('left'))}”与“{self._label(pair.get('right'))}”的相关系数为 {self._fmt(pair.get('correlation'), 2)}。"
+                )
+            finding = (
+                "热力图适合快速锁定关系更紧密的数值指标，帮助报告聚焦真正联动的指标组合。"
+            )
+            method = (
+                "检查时优先关注颜色最深、绝对值最大的格子，再回到指标定义判断这种相关是否具有实际解释价值。"
+            )
+        else:
+            key_data = ["该图用于支撑报告中的重点结论。"]
+            finding = "该图反映了当前数据中最值得优先解释的一组关系。"
+            method = "检查时结合图形形态与对应统计结果综合判断。"
+
+        return {
+            "heading": label,
+            "path": path,
+            "caption": label,
+            "key_data": key_data,
+            "finding": finding,
+            "method": method,
+        }
+
+    def _fallback_chart_meta(self, stem: str, path: str) -> Dict[str, Any]:
+        if stem in {"bar_chart", "box_plot"} and self.significant_anova:
+            source = self.significant_anova[0] if stem == "bar_chart" else self.significant_anova[min(1, len(self.significant_anova) - 1)]
+            dependent = source.get("dependent")
+            factor = source.get("factor")
+            fallback: Dict[str, Any] = {
+                "chart_type": stem,
+                "image": path,
+                "factor": factor,
+                "dependent": dependent,
+                "source_test": source,
+            }
+            if factor in self.data_profile.get("fields", []) or dependent in self.data_profile.get("fields", []):
+                return fallback
+            if factor in self._profile_columns() and dependent in self._profile_columns():
+                return fallback
+            return fallback
+
+        if stem == "scatter_plot":
+            if self.heatmap_pairs:
+                pair = self.heatmap_pairs[0]
+                x = pair.get("left")
+                y = pair.get("right")
+                x_stats = self.stats_results.get("point_estimation", {}).get("fields", {}).get(x, {})
+                y_stats = self.stats_results.get("point_estimation", {}).get("fields", {}).get(y, {})
+                return {
+                    "chart_type": stem,
+                    "image": path,
+                    "x": x,
+                    "y": y,
+                    "correlation": pair.get("correlation"),
+                    "n": self.data_profile.get("meta", {}).get("n_rows"),
+                    "x_mean": x_stats.get("mean"),
+                    "y_mean": y_stats.get("mean"),
+                }
+            pair = self._fallback_scatter_pair()
+            if pair:
+                return pair
+
+        if stem == "correlation_heatmap":
+            return {
+                "chart_type": stem,
+                "image": path,
+                "top_pairs": self.heatmap_pairs,
+            }
+
+        return {"chart_type": stem, "image": path}
+
+    def _fallback_scatter_pair(self) -> Optional[Dict[str, Any]]:
+        estimates = self.stats_results.get("point_estimation", {}).get("fields", {})
+        numeric_cols = list(estimates.keys())[:2]
+        if len(numeric_cols) < 2:
+            return None
+        x, y = numeric_cols[0], numeric_cols[1]
+        return {
+            "chart_type": "scatter_plot",
+            "x": x,
+            "y": y,
+            "n": self.data_profile.get("meta", {}).get("n_rows"),
+            "x_mean": estimates.get(x, {}).get("mean"),
+            "y_mean": estimates.get(y, {}).get("mean"),
+        }
+
+    def _profile_columns(self) -> set[str]:
+        return {item.get("column") for item in self.data_profile.get("fields", []) if isinstance(item, dict)}
+
+    # ==================================================================
+    # Helpers
+    # ==================================================================
+
+    def _ensure_fallback_findings_and_suggestions(self) -> None:
+        if not self.findings:
+            for item in self._collect_significant_anova()[:5]:
+                self.findings.append(
+                    {
+                        "conclusion": f"不同{self._label(item.get('factor'))}分组的{self._label(item.get('dependent'))}存在显著差异。",
+                        "evidence": f"F={self._fmt(item.get('F_statistic'))}, p={self._fmt(item.get('p_value'))}",
+                        "method": item.get("method", "单因素方差分析"),
+                        "importance": 4,
+                    }
+                )
 
         if not self.suggestions:
-            lines.extend([
-                "*未生成 LLM 课程建议（可能为离线模式或 suggestions.json 缺失）。*",
-                "",
-                "建议基于上述数据发现，重点关注以下方向：",
-                "",
-                "1. 针对差异显著的群体，设计差异化教学策略",
-                "2. 针对评分较低的模块，优化教学内容和方法",
-                "3. 针对满意度较低的维度，深入调研原因并制定改进方案",
-                "",
-            ])
-            lines.extend(["---", ""])
-            return lines
+            for finding in self.findings[:3]:
+                self.suggestions.append(
+                    {
+                        "suggestion": "围绕差异显著的分组制定更有针对性的行动方案。",
+                        "evidence": finding.get("conclusion", ""),
+                        "direction": "分别观察高值组与低值组，并在资源配置、执行方式和跟踪指标上作区分。",
+                    }
+                )
 
-        lines.append(f"基于数据发现，共提出 **{len(self.suggestions)}** 条课程改进建议：")
-        lines.append("")
+    def _collect_significant_anova(self) -> List[Dict[str, Any]]:
+        tests = self.stats_results.get("anova", {}).get("tests", {})
+        items: List[Dict[str, Any]] = []
+        for test in tests.values():
+            if isinstance(test, dict) and isinstance(test.get("p_value"), (int, float)) and test["p_value"] < 0.05:
+                items.append(test)
+        items.sort(key=lambda x: x.get("p_value", 1.0))
+        return items
 
-        for i, suggestion in enumerate(self.suggestions, 1):
-            sug_text = suggestion.get("suggestion", "")
-            evidence = suggestion.get("evidence", "")
-            direction = suggestion.get("direction", "")
+    def _collect_top_point_estimates(self) -> List[Dict[str, Any]]:
+        fields = self.stats_results.get("point_estimation", {}).get("fields", {})
+        items = []
+        for column, stats in fields.items():
+            if not isinstance(stats, dict) or "mean" not in stats:
+                continue
+            items.append({"column": column, **stats})
+        items.sort(key=lambda x: x.get("mean", 0), reverse=True)
+        return items[:6]
 
-            lines.extend([
-                f"### 建议 {i}：{sug_text}",
-                "",
-                f"- **数据依据**：{evidence}",
-                f"- **改进方向**：{direction}",
-                "",
-            ])
+    def _collect_heatmap_pairs(self) -> List[Dict[str, Any]]:
+        pairs = self.chart_metadata.get("charts", [])
+        for item in pairs:
+            if item.get("chart_type") == "correlation_heatmap":
+                return item.get("top_pairs", [])
+        return []
 
-        lines.extend([
-            "---",
-            "",
-        ])
-        return lines
+    def _select_focus_fields(self, fields: List[Dict[str, Any]]) -> List[str]:
+        priority_keywords = self.domain_context.get("metric_keywords", []) + self.domain_context.get("group_keywords", [])
+        selected = []
+        for field in fields:
+            column = field.get("column", "")
+            readable = self._label(column)
+            if "col " in readable or "col_" in readable:
+                continue
+            if not priority_keywords or any(str(keyword).lower() in f"{column} {readable}".lower() for keyword in priority_keywords):
+                selected.append(readable)
+        deduped: List[str] = []
+        for item in selected:
+            if item not in deduped:
+                deduped.append(item)
+        return deduped[:10]
 
-    # ==================================================================
-    # 第七章：局限性说明
-    # ==================================================================
+    def _dataset_distribution_brief(self) -> List[str]:
+        fields = self.data_profile.get("fields", [])
+        texts: List[str] = []
+        for field in fields:
+            if field.get("inferred_type") != "categorical" or not 2 <= int(field.get("unique") or 0) <= 12:
+                continue
+            col = field.get("column", "")
+            stats = field.get("stats", {})
+            mode = stats.get("mode")
+            mode_pct = stats.get("mode_pct")
+            if mode is not None and mode_pct is not None:
+                texts.append(
+                    f"{self._label(col)}中，占比最高的选项为“{self._clean_choice(mode)}”，占 {mode_pct:.2f}%。"
+                )
+            if len(texts) >= 4:
+                break
+        return texts
 
-    def _render_chapter_7(self) -> List[str]:
-        profile_meta = self.data_profile.get("meta", {})
-        n_rows = profile_meta.get("n_rows", "未知")
-        total_missing_pct = profile_meta.get("total_missing_pct", 0)
+    def _build_toc_entries(self, *, output_format: str = "word") -> List[Dict[str, Any]]:
+        page_map = self._section_page_map(output_format=output_format)
+        entries: List[Dict[str, Any]] = []
+        for section in self.MAIN_SECTIONS:
+            label = f"{section['id']} {section['title']}"
+            page = page_map.get(section["id"], 1)
+            entries.append({"level": 1, "label": label, "page": page})
 
-        chapter_title = "七、局限性说明" if self.is_education else "八、局限性说明" if self.has_business_chapter else "七、局限性说明"
-        lines = [
-            f"# {chapter_title}",
-            "",
-            "本报告的分析结果受到以下因素的制约，在解读和使用时需要审慎考虑：",
-            "",
-            "### 7.1 相关性与因果关系",
-            "",
-            "> ⚠️ **重要提醒**：本报告中所有统计显著的相关关系**不代表因果关系**。",
-            "> 两变量之间存在显著相关，仅表明它们存在统计学上的关联，",
-            "> 不能推断其中一个变量是另一个变量的原因。干预建议应结合教学理论和实际情况综合判断。",
-            "",
-            "### 7.2 样本量限制",
-            "",
-            f"本数据集共包含 **{n_rows}** 个有效观测。样本量的大小直接影响统计检验的效力：",
-            "- 样本量过小可能导致检验效力不足（II 类错误），真实存在的差异未能检测出来",
-            "- 样本量过大可能使微小的实际差异也变得统计显著，但实际意义有限",
-            "",
-            "### 7.3 问卷偏差",
-            "",
-            "课程问卷数据存在以下固有偏差：",
-            "- **自陈报告偏差**：学生的主观评分可能受到社会期望、情绪状态、填写环境等因素影响",
-            "- **选择偏差**：填答问卷的学生群体可能不完全代表全体学生",
-            "- **量表限制**：Likert 量表数据的等距性假设可能不完全成立，但本报告基于常规做法按等距数据处理",
-            "",
-            "### 7.4 统计显著与实质显著",
-            "",
-            "统计显著性（p < 0.05）仅表明观察到的差异不太可能由偶然因素造成，",
-            "但不等于该差异在实际教学中具有重要价值。在解读结果时，",
-            "应结合效应量（如 Cohen's d、η²）和教学实际综合判断。",
-            "",
-            f"### 7.5 缺失数据影响",
-            "",
-            f"本数据集的总体缺失率为 **{total_missing_pct:.2f}%**。",
-            "缺失数据可能影响分析结果的代表性，特别是当缺失为非随机缺失（MNAR）时。",
-            "本报告采用成对删除（pairwise deletion）处理缺失值。",
-            "",
-            "### 7.6 泛化性限制",
-            "",
-            "本报告的结论基于特定课程、特定学期的问卷数据，",
-            "其结论的泛化性受限于样本的代表性和数据采集的具体情境。",
-            "将结论推广到其他课程或学期时需谨慎。",
-            "",
-            "---",
-            "",
-        ]
-        return lines
+            if section["id"] == "3":
+                for idx, note in enumerate(self.chart_notes, 1):
+                    entries.append({"level": 2, "label": f"3.{idx} {note['heading']}", "page": page + idx - 1})
+        return entries
 
-    # ==================================================================
-    # 附录：合规性验证报告
-    # ==================================================================
-
-    def _render_appendix(self) -> List[str]:
-        lines = [
-            "# 附录：合规性验证报告",
-            "",
-        ]
-
-        if not self.validation_result:
-            lines.extend([
-                "*合规性验证尚未运行。请执行以下命令生成验证结果：*",
-                "",
-                f"```bash",
-                f"python report_validator.py {self.run_dir}",
-                f"```",
-                "",
-                "运行后重新生成报告即可在附录中看到验证得分。",
-                "",
-                "---",
-                "",
-            ])
-            return lines
-
-        meta = self.validation_result.get("meta", {})
-        score = meta.get("score", 0)
-        passed = meta.get("overall_pass", False)
-        generated = meta.get("generated_at", "?")
-
-        lines.extend([
-            f"> **验证时间**：{generated}",
-            f"> **总分**：**{score}/100**",
-            f"> **整体结果**：{'✅ 通过（≥60分）' if passed else '❌ 不通过（<60分）'}",
-            "",
-            "## 各模块得分",
-            "",
-            "| 检查模块 | 得分 | 满分 | 结果 |",
-            "|----------|------|------|------|",
-        ])
-
-        checks = self.validation_result.get("checks", {})
-        module_names = {
-            "statistical_quantity": "统计数量硬指标",
-            "statistical_validity": "统计结果有效性",
-            "findings_compliance": "数据发现合规性",
-            "suggestions_reasonableness": "课程建议合理性",
-            "report_completeness": "报告完整性",
-        }
-        max_scores = {
-            "statistical_quantity": 40,
-            "statistical_validity": 20,
-            "findings_compliance": 20,
-            "suggestions_reasonableness": 10,
-            "report_completeness": 10,
+    def _section_page_map(self, *, output_format: str = "word") -> Dict[str, int]:
+        chart_count = max(1, len(self.chart_notes)) if self.chart_notes else 1
+        findings_pages = max(1, math.ceil(len(self.findings) / 4))
+        suggestions_per_page = 5 if output_format == "pdf" else 3
+        suggestions_pages = max(1, math.ceil(len(self.suggestions) / suggestions_per_page))
+        findings_start = 4 + chart_count
+        suggestions_start = findings_start + findings_pages
+        return {
+            "1": 2,
+            "2": 3,
+            "3": 4,
+            "4": findings_start,
+            "5": suggestions_start,
+            "6": suggestions_start + suggestions_pages,
         }
 
-        for key, check in checks.items():
-            name = module_names.get(key, key)
-            check_score = check.get("score", 0)
-            max_score = max_scores.get(key, "?")
-            status = "✅ 通过" if check.get("pass") else "❌ 未通过"
-            lines.append(f"| {name} | {check_score} | {max_score} | {status} |")
-
-        # 改进建议
-        improvements = self.validation_result.get("improvement_suggestions", [])
-        if improvements:
-            lines.extend([
-                "",
-                "## 改进建议",
-                "",
-            ])
-            for i, sug in enumerate(improvements, 1):
-                lines.append(f"{i}. {sug}")
-
-        lines.extend(["", "---", ""])
+    def _render_static_toc_lines(self) -> List[str]:
+        lines = []
+        for entry in self._build_toc_entries():
+            indent = "    " if entry["level"] == 2 else ""
+            lines.append(self._toc_line(f"{indent}{entry['label']}", entry["page"]))
         return lines
-
-    # ==================================================================
-    # 页脚
-    # ==================================================================
-
-    def _render_footer(self) -> List[str]:
-        return [
-            "",
-            "---",
-            "",
-            f"*本报告由 Huginn 数据分析智能体自动生成（版本 {Config.APP_VERSION}）*",
-            f"*生成时间：{self.generated_at}*",
-            f"*所有统计量由 Python（scipy + statsmodels）真实计算，可溯源至 stats_results.json*",
-            "",
-        ]
-
-    # ==================================================================
-    # 显著结果提取（复用 insight_generator.py 扫描模式）
-    # ==================================================================
-
-    def _extract_significant_results(self) -> Dict[str, List[Dict]]:
-        """扫描 stats_results.json，提取所有 p < 0.05 的显著结果。"""
-        alpha = 0.05
-        sig: Dict[str, List[Dict]] = {
-            "hypothesis": [],
-            "anova": [],
-            "chi_square": [],
-            "distribution": [],
-        }
-
-        # 1. 扫描假设检验
-        ht = self.stats_results.get("hypothesis_tests", {}).get("tests", {})
-        for test_group_name, test_group in ht.items():
-            if not isinstance(test_group, dict):
-                continue
-            if "error" in test_group:
-                continue
-
-            # 单条目检验（如 welch_ttest, grouped_ttest 等）
-            if "p_value" in test_group:
-                p_val = test_group["p_value"]
-                if isinstance(p_val, (int, float)) and p_val < alpha:
-                    item = dict(test_group)
-                    item["_source"] = test_group_name
-                    sig["hypothesis"].append(item)
-
-            # 多条目检验（如 one_sample_ttest, wilcoxon 等）
-            for key, val in test_group.items():
-                if isinstance(val, dict) and "p_value" in val:
-                    p_val = val["p_value"]
-                    if isinstance(p_val, (int, float)) and p_val < alpha:
-                        val_copy = dict(val)
-                        val_copy["_test_group"] = test_group_name
-                        val_copy["_column"] = key
-                        sig["hypothesis"].append(val_copy)
-
-        # 2. 扫描 ANOVA
-        anova_data = self.stats_results.get("anova", {}).get("tests", {})
-        for anova_name, anova_item in anova_data.items():
-            if not isinstance(anova_item, dict):
-                continue
-            if "p_value" in anova_item:
-                p_val = anova_item["p_value"]
-                if isinstance(p_val, (int, float)) and p_val < alpha:
-                    item = dict(anova_item)
-                    item["_source"] = anova_name
-                    sig["anova"].append(item)
-
-        # 3. 扫描卡方检验
-        chi_data = self.stats_results.get("chi_square_goodness_of_fit", {}).get("tests", {})
-        for chi_name, chi_item in chi_data.items():
-            if isinstance(chi_item, dict) and "p_value" in chi_item:
-                p_val = chi_item["p_value"]
-                if isinstance(p_val, (int, float)) and p_val < alpha:
-                    item = dict(chi_item)
-                    item["_source"] = chi_name
-                    sig["chi_square"].append(item)
-
-        # 4. 扫描分布检验（非正态 = 显著）
-        dist_data = self.stats_results.get("distribution_tests", {}).get("tests", {})
-        for col, col_data in dist_data.items():
-            if not isinstance(col_data, dict):
-                continue
-            for test_key in ["shapiro_wilk", "dagostino_pearson"]:
-                test_info = col_data.get(test_key)
-                if isinstance(test_info, dict) and "p_value" in test_info:
-                    p_val = test_info["p_value"]
-                    if isinstance(p_val, (int, float)) and p_val < alpha:
-                        item = dict(test_info)
-                        item["_column"] = col
-                        item["_test_type"] = test_key
-                        sig["distribution"].append(item)
-
-        # 按 p 值排序
-        for key in sig:
-            sig[key].sort(
-                key=lambda x: x.get("p_value", 1.0) if isinstance(x.get("p_value"), (int, float)) else 1.0
-            )
-
-        return sig
-
-    # ==================================================================
-    # 工具方法
-    # ==================================================================
 
     @staticmethod
-    def _fmt(val: Any, precision: int = 4) -> str:
-        """格式化数值，保留指定小数位。"""
-        if val is None:
-            return "-"
-        if isinstance(val, float):
-            return f"{val:.{precision}f}"
-        return str(val)
+    def _toc_line(label: str, page: int, width: int = 46) -> str:
+        plain_len = len(label)
+        dot_count = max(10, width - plain_len - len(str(page)))
+        return f"{label}{'.' * dot_count}{page}"
 
-# ==================================================================
-# 便捷函数
-# ==================================================================
+    def _render_static_toc_docx_entries(self) -> List[Tuple[str, int, int]]:
+        entries = []
+        for item in self._build_toc_entries():
+            entries.append((item["label"], item["page"], item["level"]))
+        return entries
+
+    def _finding_heading(self, index: int, conclusion: str) -> str:
+        text = conclusion.rstrip("。")
+        domain = self.domain_context.get("domain")
+        if domain == "retail_sales":
+            if "区域" in text and "利润率" in text:
+                return f"4.{index} 区域利润率分化"
+            if "子品类" in text and "折扣率" in text:
+                return f"4.{index} 子品类折扣率差异"
+        if domain == "education_survey":
+            if "数学能力自评与编程能力自评" in text:
+                return f"4.{index} 数学能力自评与编程能力自评"
+            if "电子游戏时间" in text and "课堂座位" in text:
+                return f"4.{index} 电子游戏时间与课堂座位选择"
+            if "数学能力自评不同" in text and "人形机器人" in text:
+                return f"4.{index} 数学能力自评与人形机器人兴趣"
+            if "技术难度" in text and "消费者" in text and "兴趣" in text:
+                return f"4.{index} 技术难度认知与消费者兴趣差异"
+            if "消费者兴趣评分分布" in text or "兴趣评分分布" in text:
+                return f"4.{index} 消费者兴趣评分分布"
+            match = re.search(r"(.+?)不同的学生在“(.+?)”上的", text)
+            if match:
+                factor, dependent = match.groups()
+                return f"4.{index} {factor}与{dependent}"
+        match = re.search(r"不同(.+?)在“(.+?)”上的", text)
+        if match:
+            factor, dependent = match.groups()
+            return f"4.{index} {factor}与{dependent}"
+        match = re.search(r"(.+?)与(.+?)之间", text)
+        if match and sum(len(group) for group in match.groups()) <= 24:
+            left, right = match.groups()
+            return f"4.{index} {left}与{right}"
+        return f"4.{index} {self._short_heading(text)}"
+
+    def _suggestion_heading(self, index: int, suggestion: Dict[str, Any]) -> str:
+        evidence = suggestion.get("evidence", "")
+        suggestion_text = suggestion.get("suggestion", "")
+        domain = self.domain_context.get("domain")
+        if domain == "retail_sales" and "中位数" in suggestion_text and "分位数" in suggestion_text:
+            return f"5.{index} 稳健利润监控与亏损预警"
+        if domain == "education_survey":
+            if "数学" in suggestion_text and "编程" in suggestion_text:
+                return f"5.{index} 数学与编程联动训练"
+            if "兴趣导入" in suggestion_text or ("机器人" in suggestion_text and "分层" in suggestion_text):
+                return f"5.{index} 分层设计机器人兴趣导入"
+            if "座位" in suggestion_text or "后排" in suggestion_text:
+                return f"5.{index} 优化课堂座位与互动"
+            if "从技术到产品" in suggestion_text or "市场分析" in suggestion_text:
+                return f"5.{index} 补充技术到产品分析"
+            if "项目选择" in suggestion_text or "自选项目" in suggestion_text:
+                return f"5.{index} 提供分层项目选择"
+            match = re.search(r"(.+?)不同的学生在“(.+?)”上的", evidence)
+            if match:
+                factor, dependent = match.groups()
+                return f"5.{index} 分层支持：{factor}与{dependent}"
+        match = re.search(r"不同(.+?)在“(.+?)”上的", evidence)
+        if match:
+            factor, dependent = match.groups()
+            return f"5.{index} 分层支持：{factor}与{dependent}"
+        if "结构性关联" in evidence:
+            return f"5.{index} 跟踪关联变量"
+        if "线性相关" in evidence:
+            return f"5.{index} 联动改进相关指标"
+        return f"5.{index} {self._short_heading(suggestion_text or evidence or '优化行动方案')}"
+
+    @staticmethod
+    def _short_heading(text: str, limit: int = 18) -> str:
+        text = re.split(r"[，。；：]", str(text).strip())[0]
+        return text if len(text) <= limit else text[:limit] + "…"
+
+    @staticmethod
+    def _ensure_sentence(text: str) -> str:
+        text = str(text).strip()
+        if text and not text.endswith(("。", "！", "？")):
+            text += "。"
+        return text
+
+    @staticmethod
+    def _clean_report_text(text: str) -> str:
+        replacements = {
+            "因位置偏远导致的": "与位置偏远相关的",
+            "极易受极端值影响": "对极端值高度敏感",
+            "受极端值影响": "对极端值较为敏感",
+            "折扣让利侵蚀利润，却未能换取销量提升": "较高折扣同时伴随较低利润，而与销售额的线性关联接近于零",
+            "折扣对销售额的拉动效应微弱": "折扣率与销售额的线性关联极弱",
+            "折扣策略未有效促进销售增长": "折扣率与销售额未呈正向线性关联",
+            "少数大额交易对整体指标产生显著拉动": "少数大额交易对总体指标贡献较大",
+            "针对折扣率与销售额无正向关联的商品分组": "针对折扣率与销售额未呈正向线性关联的现象",
+            "逐步取消或降低无效折扣": "识别并复核未改善销售表现的折扣",
+            "折扣率与销售额未呈正向线性关联，折扣率与销售额的线性关联几乎为零": "折扣率与销售额的线性关联几乎为零",
+            "无效折扣退出": "折扣有效性复核",
+            "折扣未有效促进销量，却伴随利润率的降低": "折扣率与销售额的线性关联接近于零，并与较低利润同时出现",
+            "减少无效折扣对利润的侵蚀": "减少高折扣与低利润同时出现的风险",
+            "真正能拉动销量或利润": "具有更好销售或利润表现",
+            "识别导致亏损的共性因素": "识别与亏损同时出现的共性特征",
+            "表明其利润创造效率存在系统性缺陷": "提示其利润结构值得进一步诊断",
+            "品类对利润影响显著": "不同品类的利润均值差异显著",
+            "该数据质量问题将直接影响任何基于时间的业务分析": "该日期字段在修复前不适用于基于时间的业务分析",
+            "表明差距源自品类结构、折扣水平和销量规模的区域分布不同": "提示应进一步检验品类结构、折扣水平和销量规模对区域差异的解释程度",
+            "说明区域间利润率差异更源自品类结构、折扣水平或销量规模的差异，而非单笔订单盈利能力的固有差别": "提示还需进一步检验品类结构、折扣水平和销量规模能否解释区域利润率差异",
+            "说明区域间利润率差异更可能源自品类结构、折扣水平或销量规模的差异，而非单笔订单盈利能力的固有差别": "提示还需进一步检验品类结构、折扣水平和销量规模能否解释区域利润率差异",
+            "表明“薄利多销”的假设在本经营环境不成立，单纯提高销量并非提升利润的有效路径": "说明销售数量单一指标对利润的线性解释力有限，非线性或分组关系仍需进一步检验",
+            "导致": "伴随",
+            "造成": "伴随",
+            "决定": "关联",
+            "由此可见": "据此判断",
+            "综上所述": "综合来看",
+            "可能": "",
+            "大概": "",
+            "也许": "",
+            "或许": "",
+            "应该": "可以",
+        }
+        cleaned = str(text)
+        for old, new in replacements.items():
+            cleaned = cleaned.replace(old, new)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        cleaned = re.sub(r"\bp=0(?:\.0+)?(?=[\s，。；,;）])", "p<0.001", cleaned)
+        if any(phrase in cleaned for phrase in ["不显著", "无显著", "未达显著", "未达到显著"]):
+            cleaned = cleaned.replace("显著偏低", "汇总值偏低").replace("显著偏高", "汇总值偏高")
+        return cleaned
+
+    @staticmethod
+    def _polish_validation_suggestion(text: str) -> str:
+        text = str(text).strip()
+        text = re.sub(r"^\s*[-•]?\s*", "", text)
+        text = text.replace("请增加", "后续可补充")
+        text = text.replace("请删除", "后续需避免")
+        text = text.replace("请确保", "后续应保证")
+        text = text.replace("请在", "后续可在")
+        text = re.sub(r"（如'[^']+'、'[^']+'）", "", text)
+        text = re.sub(r"（如“[^”]+”、“[^”]+”）", "", text)
+        text = text.replace("不达标", "仍有补充空间")
+        text = text.replace("存在合规性问题", "仍需保持合规表达")
+        text = text.replace("不够合理", "仍可进一步具体化")
+        text = text.replace("不够完整", "仍可继续完善")
+        if text and not text.endswith("。"):
+            text += "。"
+        return text
+
+    @staticmethod
+    def _significance_text_from_evidence(evidence: str, method: str = "") -> str:
+        match = re.search(r"p\s*[=<]\s*([0-9.]+)", evidence)
+        if not match:
+            return "该结论可作为行动参考，但仍需结合实际场景进一步核实。"
+        try:
+            p_val = float(match.group(1))
+        except ValueError:
+            return "该结论可作为行动参考，但仍需结合实际场景进一步核实。"
+        if "相关" in method:
+            r_match = re.search(r"(?:Pearson\s*)?r\s*=\s*(-?[0-9.]+)", evidence, re.IGNORECASE)
+            if p_val >= 0.05:
+                return "相关检验未达到统计显著水平，应以描述性判断为主。"
+            if r_match:
+                r_value = abs(float(r_match.group(1)))
+                strength = "很弱" if r_value < 0.1 else "较弱" if r_value < 0.3 else "中等" if r_value < 0.5 else "较强"
+                return f"统计上可检测到关联，但相关强度为{strength}，实际意义应结合效应量判断。"
+            return "统计上可检测到关联，实际意义仍需结合相关系数大小判断。"
+        if "分布" in method and p_val < 0.05:
+            return "分布检验拒绝正态性假设，均值解释应结合中位数、分位数和异常值。"
+        if p_val < 0.01:
+            return "差异达到较强显著水平，说明结论较稳定。"
+        if p_val < 0.05:
+            return "差异达到统计显著水平，说明该维度值得优先关注。"
+        return "差异未达到显著水平，应以描述性判断为主。"
+
+    @staticmethod
+    def _normalize_finding_text(text: str) -> str:
+        text = text.strip()
+        text = re.sub(r"\s+与\s+", "与", text)
+        text = re.sub(r"^不同(.+?)在“(.+?)”上的表现存在显著差异", r"不同\1分组的“\2”存在显著差异", text)
+        text = re.sub(r"^不同(.+?)在“(.+?)”上的评分是否存在显著差异", r"不同\1分组的“\2”存在显著差异", text)
+        if text and not text.endswith("。"):
+            text += "。"
+        return text
+
+    @staticmethod
+    def _clean_choice(choice: str) -> str:
+        return clean_choice(choice)
+
+    @staticmethod
+    def _fmt(value: Any, precision: int = 4) -> str:
+        if value is None:
+            return "-"
+        if isinstance(value, float):
+            return f"{value:.{precision}f}"
+        if isinstance(value, int):
+            return str(value)
+        return str(value)
+
+    @staticmethod
+    def _escape(text: str) -> str:
+        return (
+            str(text)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+
+    @staticmethod
+    def _track_name(text: str) -> str:
+        if "._" in text:
+            return text.split("._")[-1].strip()
+        return text
+
+    @classmethod
+    def _label(cls, value: Any) -> str:
+        return humanize_column_name(value)
+
 
 def generate_full_report(run_dir: str, user_requirement: str = "") -> str:
-    """
-    一行调用：生成完整 Markdown 报告。
-    :param run_dir: 运行输出目录路径
-    :param user_requirement: 用户输入的分析需求
-    :return: 完整的 Markdown 报告字符串
-    """
-    gen = ReportGenerator(run_dir, user_requirement)
-    return gen.generate()
+    return ReportGenerator(run_dir, user_requirement).generate()
 
-
-# ==================================================================
-# 命令行入口
-# ==================================================================
 
 if __name__ == "__main__":
     import sys
@@ -1562,33 +1489,27 @@ if __name__ == "__main__":
         print("用法：")
         print("  python report_generator.py <运行输出目录> [分析需求]")
         print("  python report_generator.py <运行输出目录> [分析需求] --format word")
-        print("示例：")
-        print("  python report_generator.py outputs/20260610_143022_课程问卷 '为下一次上课的老师生成课程建议报告'")
-        sys.exit(1)
+        print("  python report_generator.py <运行输出目录> [分析需求] --format pdf")
+        raise SystemExit(1)
 
     run_dir = sys.argv[1]
     user_req = sys.argv[2] if len(sys.argv) > 2 and not sys.argv[2].startswith("--") else ""
-    export_word = "--format" in sys.argv and "word" in sys.argv
+    fmt = None
+    if "--format" in sys.argv:
+        idx = sys.argv.index("--format")
+        if idx + 1 < len(sys.argv):
+            fmt = sys.argv[idx + 1]
 
-    try:
-        gen = ReportGenerator(run_dir, user_req)
-        if export_word:
-            path = gen.export_word()
-            print(f"✅ Word 报告已保存到: {path}")
+    generator = ReportGenerator(run_dir, user_req)
+    if fmt == "word":
+        output = generator.export_word()
+        print(f"✅ Word 报告已保存到: {output}")
+    elif fmt == "pdf":
+        output = generator.export_pdf()
+        if output:
+            print(f"✅ PDF 报告已保存到: {output}")
         else:
-            # 默认保存 Markdown
-            path = gen.save()
-            print(f"✅ Markdown 报告已保存到: {path}")
-
-            # 也打印摘要
-            print(f"\n报告包含 {len(gen.CHAPTERS)} 章 + 附录")
-            print(f"数据来源: {len(gen.data_profile.get('fields', []))} 个字段")
-            print(f"统计结果: {'已加载' if gen.stats_results else '未加载'}")
-            print(f"图表数量: {len(gen.chart_files)} 张")
-            print(f"数据发现: {len(gen.findings)} 条")
-            print(f"课程建议: {len(gen.suggestions)} 条")
-    except Exception as e:
-        print(f"\n❌ 报告生成失败: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
+            print("⚠️ 当前环境缺少 PDF 导出依赖，已跳过 PDF 输出")
+    else:
+        output = generator.save()
+        print(f"✅ Markdown 报告已保存到: {output}")

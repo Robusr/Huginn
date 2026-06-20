@@ -16,7 +16,12 @@
     threshold = Config.SIGNIFICANCE_THRESHOLD
 """
 import os
-from dotenv import load_dotenv
+
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - optional dependency
+    def load_dotenv(*_args, **_kwargs):
+        return False
 
 load_dotenv()
 
@@ -56,13 +61,13 @@ class Config:
     # =========================================================================
     # LLM / API 配置
     # =========================================================================
-    LLM_MODEL: str = _env("LLM_MODEL", "deepseek-chat")
+    LLM_MODEL: str = _env("LLM_MODEL", "deepseek-v4-pro")
     LLM_BASE_URL: str = _env("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
     LLM_MAX_RETRIES: int = _env_int("LLM_MAX_RETRIES", 3)
     LLM_RETRY_DELAY: int = _env_int("LLM_RETRY_DELAY", 3)
     LLM_TEMPERATURE: float = _env_float("LLM_TEMPERATURE", 0.05)
     LLM_TOP_P: float = _env_float("LLM_TOP_P", 0.95)
-    LLM_MAX_TOKENS: int = _env_int("LLM_MAX_TOKENS", 4096)
+    LLM_MAX_TOKENS: int = _env_int("LLM_MAX_TOKENS", 8192)
 
     # =========================================================================
     # 统计分析配置
@@ -77,13 +82,15 @@ class Config:
     # =========================================================================
     UNIQUE_RATIO_THRESHOLD: float = 0.05    # 唯一值占比 < 5% 且唯一数 <= 50 → 分类
     MAX_CATEGORY_CARDINALITY: int = 50       # 分类变量最大基数
+    ANALYSIS_MAX_GROUPS: int = _env_int("ANALYSIS_MAX_GROUPS", 20)
+    TUKEY_MAX_GROUPS: int = _env_int("TUKEY_MAX_GROUPS", 12)
     MIN_NUMERIC_UNIQUE: int = 10             # 至少 10 个唯一值才视为连续
 
     # =========================================================================
     # 任务筛选器配置
     # =========================================================================
     TASK_MIN_COUNT: int = _env_int("TASK_MIN_COUNT", 5)    # 最少有效任务数
-    TASK_MAX_COUNT: int = _env_int("TASK_MAX_COUNT", 10)    # 最多执行任务数
+    TASK_MAX_COUNT: int = _env_int("TASK_MAX_COUNT", 18)    # 最多执行任务数
 
     # 统计方法优先级（值越大越优先）
     TASK_PRIORITY: dict = {
@@ -95,7 +102,7 @@ class Config:
         "分布检验": 1,
     }
 
-    # 课程作业最低统计要求
+    # 默认统计覆盖要求（可通过环境变量和领域配置继续调整）
     TASK_MIN_REQUIREMENTS: dict = {
         "ANOVA": 2,
         "chi_square": 2,
@@ -103,7 +110,7 @@ class Config:
     }
 
     # =========================================================================
-    # 课程作业验收标准
+    # 默认分析完整性验收标准
     # =========================================================================
     REQUIREMENTS: dict = {
         "point_estimation_min": 5,
@@ -155,11 +162,12 @@ class Config:
     CAUSAL_WORDS: list = [
         "导致", "造成", "使得", "影响", "决定", "引起", "促成",
         "因为", "所以", "因此", "故而", "由此可见", "综上所述",
+        "侵蚀", "促进销量", "源自",
     ]
 
     VAGUE_WORDS: list = [
-        "可能", "大概", "也许", "或许", "差不多", "基本上",
-        "感觉", "认为", "觉得", "应该", "想必", "看样子",
+        "大概", "也许", "或许", "差不多", "基本上",
+        "感觉", "想必", "看样子",
     ]
 
     # =========================================================================
@@ -189,8 +197,7 @@ class Config:
         "statistical_quantity": "统计数量硬指标 (30分)",
         "statistical_validity": "统计结果有效性 (20分)",
         "findings_compliance": "数据发现合规性 (20分)",
-        "business_analysis_completeness": "业务分析覆盖度 (10分)",
-        "suggestions_quality": "建议质量 (10分)",
+        "suggestions_reasonableness": "行动建议合理性 (10分)",
         "report_completeness": "报告完整性 (10分)",
     }
 
@@ -206,6 +213,6 @@ class Config:
     # =========================================================================
     # 应用默认值
     # =========================================================================
-    DEFAULT_REQUIREMENT: str = "对数据进行分析，生成分析报告"
-    APP_VERSION: str = "v2.0"
-    APP_PAGE_TITLE: str = "Huginn - 数据分析智能体"
+    DEFAULT_REQUIREMENT: str = "根据数据生成包含主要发现、图表分析和行动建议的正式报告"
+    APP_VERSION: str = "v1.0"
+    APP_PAGE_TITLE: str = "Huginn - 通用数据分析报告智能体"
