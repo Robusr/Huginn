@@ -3,8 +3,7 @@
 @File    : llm_client.py
 @Author  : Robusr
 @Date    : 2026/6/10 15:59
-@Description: DeepSeek API 封装
-@Software: PyCharm
+@Description: LLM 客户端 — 域感知四轮调用（task_planning/problem_discovery/findings_suggestions/report_writing）
 """
 
 """
@@ -29,26 +28,28 @@ from logger import get_logger
 
 logger = get_logger(__name__)
 
-# 加载环境变量
 load_dotenv()
 
-# ------------------------------
-# 结构化输出模型定义（Pydantic v2）
-# ------------------------------
+
+# ============================================================================
+# Pydantic 结构化输出模型
+# ============================================================================
+
 class CandidateQuestion(BaseModel):
     """单个候选分析问题的结构化格式"""
     question: str = Field(description="自然语言描述的分析问题，必须符合当前数据领域和用户需求")
     variables: List[str] = Field(description="涉及的变量名，必须与数据画像中的column字段完全一致")
     method: str = Field(
-        description="建议使用的统计方法，只能从以下选择：t检验、配对t检验、ANOVA、卡方检验、相关性分析、分布检验"
+        description="建议使用的统计方法：t检验、配对t检验、ANOVA、卡方检验、相关性分析、分布检验"
     )
     value: str = Field(description="该问题的业务分析价值，说明为什么值得研究")
     task_pool_id: Optional[str] = Field(default=None, description="候选任务池中的稳定任务ID")
     variable_ids: List[str] = Field(default_factory=list, description="字段注册表中的字段ID")
 
 class CandidateQuestionsResponse(BaseModel):
-    """候选问题列表的输出格式"""
-    questions: List[CandidateQuestion] = Field(description="8-12个候选分析问题，必须覆盖至少2个ANOVA、2个卡方、3个t检验")
+    """候选问题列表。"""
+    questions: List[CandidateQuestion] = Field(description="8-12个候选分析问题")
+
 
 
 class CandidateTaskSelection(BaseModel):
@@ -64,9 +65,9 @@ class CandidateTaskSelectionResponse(BaseModel):
 
 
 class DataFinding(BaseModel):
-    """单个数据发现的结构化格式"""
-    conclusion: str = Field(description="基于统计结果的明确结论，不能模糊")
-    evidence: str = Field(description="数据依据，必须引用具体的统计量和p值，例如：'F=4.23, p=0.023'")
+    """单个数据发现。"""
+    conclusion: str = Field(description="基于统计结果的明确结论")
+    evidence: str = Field(description="数据依据，引用具体的统计量和p值")
     method: str = Field(description="使用的统计方法")
     importance: int = Field(description="重要性评分，1-5分，5分最高")
     source_stat_keys: List[str] = Field(default_factory=list, description="引用的统计结果路径，如anova.task_1_one_way_anova")
@@ -114,9 +115,6 @@ class ReportWritingResponse(BaseModel):
     suggestions: List[ActionSuggestion] = Field(default_factory=list, description="润色后的行动建议，证据引用不得改变")
     limitations: List[str] = Field(description="数据与方法使用边界")
 
-# ------------------------------
-# DeepSeek API 客户端核心
-# ------------------------------
 class LLMClient:
     SKILL_REFERENCE_FILES = {
         "question_planning": "question_planning.md",
@@ -269,11 +267,26 @@ class LLMClient:
         if self.offline_mode:
             raise Exception("离线模式下无法调用API")
 
+        if response_format:
+            schema_json = response_format.model_json_schema()
+            schema_str = json.dumps(schema_json, ensure_ascii=False)
+            augmented_messages = [
+                *messages[:-1],
+                {
+                    "role": messages[-1]["role"],
+                    "content": messages[-1]["content"] + (
+                        f"\n\n【输出格式 - JSON Schema】\n{schema_str}"
+                    ),
+                },
+            ]
+        else:
+            augmented_messages = messages
+
         for attempt in range(self.max_retries):
             try:
                 kwargs = {
                     "model": self.model,
-                    "messages": messages,
+                    "messages": augmented_messages,
                     "temperature": Config.LLM_TEMPERATURE,
                     "top_p": Config.LLM_TOP_P,
                     "max_tokens": Config.LLM_MAX_TOKENS,
@@ -289,13 +302,11 @@ class LLMClient:
                     raise
             except RateLimitError:
                 if attempt == self.max_retries - 1:
-                    raise Exception("DeepSeek API 速率限制超限，请等待1分钟后重试")
-                wait_time = self.retry_delay * (attempt + 1)
-                logger.warning("速率限制触发，等待 %d 秒后重试...", wait_time)
-                time.sleep(wait_time)
+                    raise Exception("DeepSeek API 速率限制超限")
+                time.sleep(self.retry_delay * (attempt + 1))
             except APITimeoutError:
                 if attempt == self.max_retries - 1:
-                    raise Exception("DeepSeek API 超时，请检查网络连接")
+                    raise Exception("DeepSeek API 超时")
                 time.sleep(self.retry_delay)
             except APIError as e:
                 raise Exception(f"DeepSeek API 调用失败: {str(e)}")
@@ -811,7 +822,19 @@ class LLMClient:
         self._last_distinctive_features = distinctive_features or {}
         context = domain_context or detect_domain_context(data_profile)
         if self.offline_mode:
-            return self._load_offline_findings_suggestions()
+            return self._load_offline_findings_suggestions(stats_results)
+
+        sig_count = self._count_significant_results(stats_results)
+        evidence_block = self._build_evidence_block(evidence_table)
+
+        # 问题上下文
+        problems_context = ""
+        if problems:
+            problems_context = "\n".join(
+                f"- {p.problem}（建议角度: {p.suggested_angle}）"
+                for p in problems[:5]
+            )
+            problems_context = f"\n【Round 2 发现的问题】\n{problems_context}\n"
 
         evidence_table = self._build_evidence_table(stats_results, distinctive_features)
         compact_features = (distinctive_features or {}).get("features", [])[:15]
@@ -822,13 +845,12 @@ class LLMClient:
 {json.dumps(context, ensure_ascii=False, indent=2)}
 
 【数据画像】
-{json.dumps(data_profile, ensure_ascii=False, indent=2)}
+{json.dumps(data_profile, ensure_ascii=False, indent=2)[:2000]}
 
-【已执行的统计任务】
-{json.dumps(executed_tasks, ensure_ascii=False, indent=2)}
+【已执行任务数】{len(valid_tasks)}
 
 【统计结果】
-{json.dumps(stats_results, ensure_ascii=False, indent=2)}
+预扫描发现 {sig_count} 个统计显著（p<0.05）的结果。
 
 【特色信号候选】
 {json.dumps(compact_features, ensure_ascii=False, indent=2)}
@@ -1133,9 +1155,6 @@ class LLMClient:
                     polished.suggestion = original.suggestion
                     polished.direction = original.direction
 
-    # ------------------------------
-    # 离线模式支持（用于演示）
-    # ------------------------------
     def _load_offline_questions(self) -> List[CandidateQuestion]:
         """基于真实数据画像启发式生成候选问题（离线模式）。"""
         logger.info("离线模式：基于数据画像自动生成候选问题")

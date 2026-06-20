@@ -19,7 +19,7 @@ from datetime import datetime
 
 import streamlit as st
 
-from config import Config
+from config import Config, clean_field_name
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -91,8 +91,8 @@ def load_run_results(run_dir: Path) -> dict:
 # ==================================================================
 
 def main():
-    st.title(f"📊 课程问卷分析智能体 Huginn {Config.APP_VERSION}")
-    st.markdown("> **全自动数据分析**：上传 Excel/CSV 表格，自动完成统计分析和报告生成")
+    st.title(f"📊 数据分析智能体 Huginn {Config.APP_VERSION}")
+    st.markdown("> **全自动数据分析**：上传 Excel/CSV 表格，自动完成统计分析、业务诊断和报告生成")
 
     # ── 侧边栏 ────────────────────────────────────────────────
     with st.sidebar:
@@ -101,7 +101,7 @@ def main():
         uploaded_file = st.file_uploader(
             "📁 上传数据文件",
             type=["csv", "xlsx"],
-            help="支持 .csv 和 .xlsx 格式的课程问卷数据",
+            help="支持 .csv 和 .xlsx 格式的数据文件",
         )
 
         user_requirement = st.text_area(
@@ -121,7 +121,7 @@ def main():
         run_button = st.button(
             "🚀 开始分析",
             type="primary",
-            use_container_width=True,
+            width="stretch",
             disabled=uploaded_file is None,
         )
 
@@ -210,26 +210,45 @@ def main():
                 col3.metric("缺失率", f"{meta.get('total_missing_pct', 0):.1f}%")
                 col4.metric("重复行", overview.get("duplicate_rows", 0))
 
-                st.subheader("字段类型分布")
-                type_counts = overview.get("field_type_counts", {})
-                type_labels = Config.TYPE_LABELS
-                cols = st.columns(len(type_counts) if type_counts else 1)
-                for i, (ftype, count) in enumerate(sorted(type_counts.items())):
-                    cols[i % len(cols)].metric(
-                        type_labels.get(ftype, ftype), count
-                    )
+                st.divider()
 
+                # 字段类型 + 执行统计
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.subheader("字段类型分布")
+                    type_counts = overview.get("field_type_counts", {})
+                    type_labels = Config.TYPE_LABELS
+                    cols = st.columns(len(type_counts) if type_counts else 1)
+                    for i, (ftype, count) in enumerate(sorted(type_counts.items())):
+                        cols[i % len(cols)].metric(
+                            type_labels.get(ftype, ftype), count
+                        )
+                with c2:
+                    st.subheader("执行统计")
+                    valid_tasks = results.get("valid_tasks", [])
+                    findings = results.get("findings", [])
+                    suggestions = results.get("suggestions", [])
+                    charts = results.get("charts", [])
+                    val = results.get("validation_result")
+                    val_score = val.get("meta", {}).get("score", "?") if val else "?"
+
+                    st.metric("执行任务", f"{len(valid_tasks)} 项")
+                    st.metric("数据发现", f"{len(findings)} 条")
+                    st.metric("改进建议", f"{len(suggestions)} 条")
+                    st.metric("验证得分", f"{val_score}/100")
+
+                st.divider()
                 st.subheader("字段详情")
                 field_data = []
                 for f in fields:
                     field_data.append({
-                        "字段名": f.get("column"),
+                        "字段名": clean_field_name(f.get("column", "")),
                         "类型": type_labels.get(f.get("inferred_type", ""), f.get("inferred_type")),
                         "有效值": f.get("count"),
                         "缺失": f"{f.get('missing_pct', 0):.1f}%",
                         "唯一值": f.get("unique"),
                     })
-                st.dataframe(field_data, use_container_width=True)
+                st.dataframe(field_data, width="stretch")
             else:
                 st.info("未找到数据画像文件")
 
@@ -243,7 +262,7 @@ def main():
                     desc = chart_labels.get(chart_path.stem, chart_path.stem)
                     with cols[i % 2]:
                         st.subheader(desc)
-                        st.image(str(chart_path), use_container_width=True)
+                        st.image(str(chart_path), width="stretch")
             else:
                 st.info("未生成可视化图表")
 
@@ -259,13 +278,13 @@ def main():
                     for col, info in pe.items():
                         if isinstance(info, dict) and "error" not in info:
                             pe_data.append({
-                                "字段": col,
+                                "字段": clean_field_name(col),
                                 "样本量": info.get("n"),
                                 "均值": f"{info.get('mean', 0):.4f}",
                                 "标准差": f"{info.get('std', 0):.4f}",
                                 "中位数": f"{info.get('median', 0):.4f}",
                             })
-                    st.dataframe(pe_data, use_container_width=True)
+                    st.dataframe(pe_data, width="stretch")
 
                 # 假设检验显著结果
                 ht = stats.get("hypothesis_tests", {}).get("tests", {})
@@ -282,7 +301,7 @@ def main():
                                 "p值": f"**{p:.4f}**",
                             })
                 if sig_tests:
-                    st.dataframe(sig_tests, use_container_width=True)
+                    st.dataframe(sig_tests, width="stretch")
                 else:
                     st.info("无显著假设检验结果")
 
@@ -301,7 +320,7 @@ def main():
                             })
                 if sig_anova:
                     st.subheader("ANOVA 显著结果")
-                    st.dataframe(sig_anova, use_container_width=True)
+                    st.dataframe(sig_anova, width="stretch")
 
                 # 数量自查
                 cc = stats.get("counts_check", {})
@@ -335,14 +354,14 @@ def main():
         with tabs[4]:
             suggestions = results.get("suggestions", [])
             if suggestions:
-                st.subheader(f"课程改进建议（{len(suggestions)} 条）")
+                st.subheader(f"改进建议（{len(suggestions)} 条）")
                 for i, s in enumerate(suggestions, 1):
                     with st.container(border=True):
                         st.markdown(f"### 建议 {i}：{s.get('suggestion', '')}")
                         st.markdown(f"**数据依据**: {s.get('evidence', '')}")
                         st.markdown(f"**改进方向**: {s.get('direction', '')}")
             else:
-                st.info("未生成课程建议")
+                st.info("未生成改进建议")
 
         # ── Tab 6: 验证 ──────────────────────────────────
         with tabs[5]:
@@ -377,7 +396,30 @@ def main():
         with tabs[6]:
             report_md = results.get("report_md", "")
             if report_md:
-                st.markdown(report_md)
+                # 提供下载和预览切换
+                view_mode = st.radio(
+                    "查看方式",
+                    ["📖 章节预览", "📄 原始 Markdown"],
+                    horizontal=True,
+                )
+                if view_mode == "📄 原始 Markdown":
+                    st.code(report_md, language="markdown")
+                else:
+                    # 按章节分割报告，折叠显示
+                    sections = report_md.split("\n# ")
+                    # 第一部分是报告头
+                    if sections:
+                        st.markdown(sections[0])
+                    for sec in sections[1:]:
+                        sec = sec.strip()
+                        if not sec:
+                            continue
+                        # 提取章节标题
+                        title_end = sec.find("\n")
+                        title = sec[:title_end].strip() if title_end > 0 else sec[:80]
+                        # 折叠显示
+                        with st.expander(f"# {title}", expanded=len(sections) <= 4):
+                            st.markdown(sec)
             else:
                 st.info("未找到完整报告文件")
 
@@ -397,7 +439,7 @@ def main():
                         data=f.read(),
                         file_name="final_report.md",
                         mime="text/markdown",
-                        use_container_width=True,
+                        width="stretch",
                     )
 
         # Word 报告
@@ -410,7 +452,7 @@ def main():
                         data=f.read(),
                         file_name="final_report.docx",
                         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                        use_container_width=True,
+                        width="stretch",
                     )
 
         # 统计结果 JSON
@@ -423,7 +465,7 @@ def main():
                         data=f.read(),
                         file_name="stats_results.json",
                         mime="application/json",
-                        use_container_width=True,
+                        width="stretch",
                     )
 
         # 打包下载
@@ -439,7 +481,7 @@ def main():
                 data=zip_buffer,
                 file_name=f"{run_dir.name}.zip",
                 mime="application/zip",
-                use_container_width=True,
+                width="stretch",
             )
 
 

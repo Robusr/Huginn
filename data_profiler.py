@@ -104,7 +104,8 @@ class DataProfiler:
                 "unique": int(series.nunique(dropna=True)),
             }
 
-            if ftype == "numeric_continuous":
+            if ftype in ("numeric_continuous", "numeric_discrete"):
+                # 数值型字段计算完整数值统计（mean/std/percentiles等）
                 field_info["stats"] = self._numeric_stats(series)
             elif ftype == "datetime":
                 field_info["stats"] = self._datetime_stats(series)

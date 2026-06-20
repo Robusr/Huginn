@@ -14,6 +14,7 @@ from typing import Any, Dict, Optional, Union
 import numpy as np
 import pandas as pd
 
+from config import clean_field_name
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -21,6 +22,10 @@ logger = get_logger(__name__)
 import matplotlib
 
 matplotlib.use("Agg")
+
+# 提高 PIL 解压炸弹阈值，防止大尺寸图表报错
+from PIL import Image
+Image.MAX_IMAGE_PIXELS = None  # 禁用像素限制
 
 import matplotlib.pyplot as plt
 from matplotlib import font_manager as fm
@@ -353,6 +358,12 @@ class ChartGenerator:
         numeric_cols = [c for c in numeric_cols if c in self.df.columns]
         if len(numeric_cols) < 2:
             return None, {}
+
+        # 限制列数，避免热力图过大（PIL DecompressionBombError）
+        if len(numeric_cols) > max_cols:
+            # 优先选择方差较大的列（更有分析价值）
+            variances = self.df[numeric_cols].var().sort_values(ascending=False)
+            numeric_cols = list(variances.head(max_cols).index)
 
         corr_matrix = self.df[numeric_cols].corr()
         if corr_matrix.empty:

@@ -38,6 +38,25 @@ def _env_float(key: str, default: float) -> float:
     return float(os.getenv(key, str(default)))
 
 
+def clean_field_name(col: str) -> str:
+    """清洗字段名，去掉问卷平台的技术前缀，提取可读的中文名称。
+
+    示例：
+        'col_1_你的性别是' → '你的性别是'
+        'col_122._竞技运动如跑鞋传感器智能教练等' → '竞技运动如跑鞋传感器智能教练等'
+        'col_17你将来有可能...' → '你将来有可能...'
+        '提交答卷时间' → '提交答卷时间'
+    """
+    import re
+    # 去掉 col_数字 前缀（后可选跟 _ 或 .）
+    cleaned = re.sub(r'^col_\d+(?:[\._])?\s*', '', col)
+    if not cleaned:
+        return col
+    # 去掉残留的前导下划线或点号
+    cleaned = cleaned.lstrip('._')
+    return cleaned if cleaned else col
+
+
 class Config:
     # =========================================================================
     # LLM / API 配置
@@ -103,6 +122,41 @@ class Config:
     }
 
     # =========================================================================
+    # 领域检测与业务模块开关
+    # =========================================================================
+    # LLM 调用轮次配置
+    LLM_MAX_ROUNDS: int = _env_int("LLM_MAX_ROUNDS", 4)      # 默认4轮，可减为2轮
+    LLM_EXPECTED_ROUNDS: int = 4                             # 验证时预期的完整轮次数
+
+    # 业务分析模块开关（按 domain key 配置启用哪些模块）
+    DOMAIN_MODULES: dict = {
+        "retail_sales": [
+            "loss_driver_analysis",
+            "discount_response_analysis",
+            "pareto_analysis",
+            "cross_dimension_analysis",
+        ],
+        "education_survey": [],
+        "general_business": [],
+    }
+
+    # 单个模块开关（可通过环境变量禁用）
+    BUSINESS_MODULES_ENABLED: dict = {
+        "loss_driver_analysis": _env("ENABLE_LOSS_DRIVER", "true").lower() == "true",
+        "discount_response_analysis": _env("ENABLE_DISCOUNT_ANALYZER", "true").lower() == "true",
+        "pareto_analysis": _env("ENABLE_PARETO", "true").lower() == "true",
+        "cross_dimension_analysis": _env("ENABLE_CROSS_DIM", "true").lower() == "true",
+    }
+
+    # =========================================================================
+    # 输出文件命名
+    # =========================================================================
+    FIELD_REGISTRY_FILENAME: str = "field_registry.json"
+    EVIDENCE_TABLE_FILENAME: str = "evidence_table.json"
+    LLM_AUDIT_FILENAME: str = "llm_call_audit.json"
+    GRANULARITY_FILENAME: str = "granularity.json"
+
+    # =========================================================================
     # 报告验证 — 禁止词汇
     # =========================================================================
     CAUSAL_WORDS: list = [
@@ -140,11 +194,20 @@ class Config:
     }
 
     MODULE_NAMES: dict = {
-        "statistical_quantity": "统计数量硬指标 (40分)",
+        "statistical_quantity": "统计数量硬指标 (30分)",
         "statistical_validity": "统计结果有效性 (20分)",
         "findings_compliance": "数据发现合规性 (20分)",
         "suggestions_reasonableness": "行动建议合理性 (10分)",
         "report_completeness": "报告完整性 (10分)",
+    }
+
+    MODULE_MAX_SCORES: dict = {
+        "statistical_quantity": 30,
+        "statistical_validity": 20,
+        "findings_compliance": 20,
+        "business_analysis_completeness": 10,
+        "suggestions_quality": 10,
+        "report_completeness": 10,
     }
 
     # =========================================================================

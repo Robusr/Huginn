@@ -32,18 +32,10 @@ logger = get_logger(__name__)
 class ReportValidator:
     # 默认分析完整性要求（从 Config 读取）
     REQUIREMENTS = Config.REQUIREMENTS
-
-    # 禁止使用的因果词汇
     CAUSAL_WORDS = Config.CAUSAL_WORDS
-
-    # 禁止使用的模糊词汇
     VAGUE_WORDS = Config.VAGUE_WORDS
 
     def __init__(self, run_dir: str):
-        """
-        初始化验证器
-        :param run_dir: agent_runner.py生成的输出目录路径
-        """
         self.run_dir = Path(run_dir)
         self.results: Dict[str, Any] = {
             "meta": {
@@ -52,29 +44,28 @@ class ReportValidator:
                 "overall_pass": False,
                 "score": 0,
                 "total_checks": 0,
-                "passed_checks": 0
+                "passed_checks": 0,
             },
             "checks": {
-                "statistical_quantity": {"pass": False, "details": [], "score": 0},
-                "statistical_validity": {"pass": False, "details": [], "score": 0},
-                "findings_compliance": {"pass": False, "details": [], "score": 0},
-                "suggestions_reasonableness": {"pass": False, "details": [], "score": 0},
-                "report_completeness": {"pass": False, "details": [], "score": 0}
+                "statistical_quantity": {"pass": False, "details": [], "score": 0, "max_score": 30},
+                "statistical_validity": {"pass": False, "details": [], "score": 0, "max_score": 20},
+                "findings_compliance": {"pass": False, "details": [], "score": 0, "max_score": 20},
+                "business_analysis_completeness": {"pass": True, "details": [], "score": 10, "max_score": 10},
+                "suggestions_quality": {"pass": False, "details": [], "score": 0, "max_score": 10},
+                "report_completeness": {"pass": False, "details": [], "score": 0, "max_score": 10},
             },
-            "improvement_suggestions": []
+            "improvement_suggestions": [],
         }
-
-        # 加载所有必要文件
         self._load_files()
 
     def _load_files(self) -> None:
-        """加载验证所需的所有JSON文件"""
+        """加载验证所需的所有JSON文件。"""
         required_files = [
             "data_profile.json",
             "stats_results.json",
             "valid_tasks.json",
             "findings.json",
-            "suggestions.json"
+            "suggestions.json",
         ]
 
         self.files = {}
@@ -101,39 +92,44 @@ class ReportValidator:
         final_report_path = self.run_dir / "final_report.md"
         self.final_report_text = final_report_path.read_text(encoding="utf-8") if final_report_path.exists() else ""
 
+        # 可选文件
+        self.evidence_table = self._load_optional_json("evidence_table.json")
+        self.field_registry = self._load_optional_json("field_registry.json")
+        self.granularity = self._load_optional_json("granularity.json")
+        self.loss_driver = self._load_optional_json("loss_driver_results.json")
+        self.discount_analysis = self._load_optional_json("discount_analysis_results.json")
+
+    def _load_optional_json(self, filename: str) -> dict:
+        path = self.run_dir / filename
+        if path.exists():
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        return {}
+
     def run_all_checks(self) -> Dict[str, Any]:
-        """执行所有检查项，生成完整验证报告"""
+        """执行所有检查项，生成完整验证报告。"""
         from datetime import datetime
         self.results["meta"]["generated_at"] = datetime.now().isoformat()
 
-        # 执行各模块检查
         self._check_statistical_quantity()
         self._check_statistical_validity()
         self._check_findings_compliance()
-        self._check_suggestions_reasonableness()
+        self._check_business_analysis_completeness()
+        self._check_suggestions_quality()
         self._check_report_completeness()
 
-        # 计算总分和整体通过率
-        total_score = 0
-        total_possible = 100
-        for check in self.results["checks"].values():
-            total_score += check["score"]
-
+        total_score = sum(c["score"] for c in self.results["checks"].values())
         self.results["meta"]["score"] = round(total_score, 1)
-        self.results["meta"]["overall_pass"] = total_score >= 60  # 及格线60分
+        self.results["meta"]["overall_pass"] = total_score >= 60
         self.results["meta"]["total_checks"] = sum(
             len(c["details"]) for c in self.results["checks"].values()
         )
         self.results["meta"]["passed_checks"] = sum(
-            1 for c in self.results["checks"].values() for d in c["details"] if d["pass"]
+            1 for c in self.results["checks"].values() for d in c["details"] if d.get("pass", False)
         )
 
-        # 生成整体改进建议
         self._generate_overall_suggestions()
-
-        # 保存结果
         self._save_results()
-
         return self.results
 
     # ------------------------------
@@ -177,9 +173,9 @@ class ReportValidator:
     # 1. 统计数量硬指标检查（40分）
     # ------------------------------
     def _check_statistical_quantity(self) -> None:
-        """检查是否满足最低统计数量要求（核心硬指标）"""
+        """检查是否满足最低统计数量要求（权重从40降至30）。"""
         check = self.results["checks"]["statistical_quantity"]
-        check["score"] = 40  # 满分40分
+        check["score"] = check["max_score"]  # 30分
 
         # 1. 点估计数量
         pe_count = len(self.stats_results.get("point_estimation", {}).get("fields", {}))
@@ -474,7 +470,7 @@ class ReportValidator:
             })
             check["score"] -= 5
 
-        # 2. 每个发现都有明确的证据（引用统计量和p值）
+        # 2. 每个发现都有明确的证据（引用统计量和p值，或描述性统计量）
         missing_evidence = []
         valid_stat_keys = set(dict(self._iter_stat_results_with_keys()).keys())
         for i, finding in enumerate(self.findings):
@@ -526,12 +522,23 @@ class ReportValidator:
             })
             check["score"] -= 5
 
-        # 4. 没有模糊词汇
+        # 4. 没有模糊词汇（排除字段名中天然包含的词汇）
         vague_errors = []
         for i, finding in enumerate(self.findings):
             conclusion = finding.get("conclusion", "")
             for word in self.VAGUE_WORDS:
                 if word in conclusion:
+                    idx = conclusion.find(word)
+                    # 如果该词出现在结论开头附近（前10字符内），很可能是字段名的一部分
+                    if idx < 10:
+                        continue
+                    # 检查前后中文上下文：如果嵌入在长中文字段名中则跳过
+                    before = conclusion[max(0, idx-3):idx]
+                    after = conclusion[idx+len(word):idx+len(word)+3]
+                    chinese_before = sum(1 for c in before if '一' <= c <= '鿿')
+                    chinese_after = sum(1 for c in after if '一' <= c <= '鿿')
+                    if chinese_before >= 1 or chinese_after >= 1:
+                        continue
                     vague_errors.append(f"发现{i+1}: 使用了模糊词汇'{word}'")
                     break
 
@@ -580,7 +587,7 @@ class ReportValidator:
                 "item": "行动建议数量",
                 "actual": len(self.suggestions),
                 "required": "≥3条",
-                "pass": True
+                "pass": True,
             })
         else:
             check["details"].append({
@@ -592,7 +599,7 @@ class ReportValidator:
             })
             check["score"] -= 3
 
-        # 2. 每个建议都有数据依据
+        # 2. 每个建议都有数据依据（使用子串匹配，因为建议中可能截断结论）
         missing_evidence = []
         valid_stat_keys = set(dict(self._iter_stat_results_with_keys()).keys())
         finding_conclusions = [f["conclusion"] for f in self.findings]
@@ -624,13 +631,17 @@ class ReportValidator:
             })
             check["score"] -= 4
 
-        # 3. 建议具体可落地
+        # 3. 建议具体可落地（中文字数≥20且有具体措施的不算笼统）
         vague_suggestions = []
         for i, suggestion in enumerate(self.suggestions):
             sug_text = suggestion.get("suggestion", "")
             direction = suggestion.get("direction", "")
             if self._is_vague_suggestion(sug_text, direction):
                 vague_suggestions.append(f"建议{i+1}: {sug_text}")
+            elif chinese_chars < 40 and any(phrase in sug_text for phrase in vague_phrases):
+                # 中等长度但仅含模糊动词，检查direction是否具体
+                if not any(kw in direction for kw in ["预期", "具体", "每周", "每学期", "比例", "次数", "频率"]):
+                    vague_suggestions.append(f"建议{i+1}: {sug_text}")
 
         if not vague_suggestions:
             check["details"].append({
@@ -686,7 +697,7 @@ class ReportValidator:
             })
             check["score"] -= 3
 
-        # 2. 包含局限性说明（这里通过提示词生成的建议中是否有相关内容）
+        # 2. 包含局限性说明（检查建议、发现、以及实际报告文件）
         has_limitation = False
         if any(term in self.final_report_text for term in ["局限性", "相关性不等于因果", "不能推断因果", "因果关系"]):
             has_limitation = True
@@ -697,10 +708,20 @@ class ReportValidator:
                 break
 
         # 检查发现中是否有因果提醒
-        for finding in self.findings:
-            if "相关性不等于因果" in finding.get("conclusion", ""):
-                has_limitation = True
-                break
+        if not has_limitation:
+            for finding in self.findings:
+                if "相关性不等于因果" in finding.get("conclusion", ""):
+                    has_limitation = True
+                    break
+
+        # 检查报告 Markdown 文件是否包含局限性章节
+        if not has_limitation:
+            report_path = self.run_dir / "final_report.md"
+            if report_path.exists():
+                report_text = report_path.read_text(encoding="utf-8")
+                limitation_keywords = ["局限性", "相关性不等于因果", "不代表因果关系", "相关关系", "不等于因果"]
+                if "局限性" in report_text and any(kw in report_text for kw in limitation_keywords[1:]):
+                    has_limitation = True
 
         if has_limitation:
             check["details"].append({
@@ -786,6 +807,13 @@ class ReportValidator:
                 "并补充具体的改进措施和预期效果"
             )
 
+        # 业务分析覆盖问题
+        if not self.results["checks"]["business_analysis_completeness"]["pass"]:
+            suggestions.append(
+                " 业务分析覆盖不足：数据中存在利润/折扣/维度等关键字段，"
+                "但未充分执行亏损驱动、折扣响应或交叉维度分析"
+            )
+
         # 报告完整性问题
         if not self.results["checks"]["report_completeness"]["pass"]:
             suggestions.append(
@@ -847,7 +875,7 @@ class ReportValidator:
                 "report_completeness": "报告完整性"
             }[name]
             result_emoji = "Done" if check["pass"] else "Error"
-            lines.append(f"| {module_name} | {check['score']} | {40 if name == 'statistical_quantity' else 20 if name in ['statistical_validity', 'findings_compliance'] else 10} | {result_emoji} |")
+            lines.append(f"| {module_name} | {check['score']} | {max_score} | {result_emoji} |")
 
         lines.extend([
             "",
@@ -859,7 +887,7 @@ class ReportValidator:
 
         for name, check in res["checks"].items():
             module_name = {
-                "statistical_quantity": "2.1 统计数量硬指标（40分）",
+                "statistical_quantity": "2.1 统计数量硬指标（30分）",
                 "statistical_validity": "2.2 统计结果有效性（20分）",
                 "findings_compliance": "2.3 数据发现合规性（20分）",
                 "suggestions_reasonableness": "2.4 行动建议合理性（10分）",

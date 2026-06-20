@@ -248,10 +248,37 @@ class DataLoader:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _extract_leading_number(val: Any) -> Optional[float]:
+        """从字符串中提取前导数字。
+
+        支持格式：
+            '5（非常感兴趣）' → 5.0
+            'B.1-2小时' → 1.0 (提取第一个数字)
+            '10小时' → 10.0
+            '4' → 4.0
+            '3.5' → 3.5
+            'A.男' → None (无数字开头)
+        """
+        import re
+        s = str(val).strip()
+        # 尝试直接转换纯数字
+        try:
+            return float(s)
+        except ValueError:
+            pass
+        # 去掉前导字母标记（如 A. B. C. D. E.）
+        s = re.sub(r'^[A-Ea-e]\.\s*', '', s)
+        # 提取开头的数字（支持小数）
+        m = re.match(r'(\d+(?:\.\d+)?)', s)
+        if m:
+            return float(m.group(1))
+        return None
+
+    @staticmethod
     def _infer_and_convert_types(df: pd.DataFrame) -> pd.DataFrame:
         """
         推断并转换数据类型：
-        - 看起来是数值的 object 列 → numeric
+        - 看起来是数值的 object 列 → numeric（含 Likert 量表、时长等混合格式）
         - 看起来是日期时间的 object 列 → datetime
         - Likert 量表等以数字开头的标签 → numeric
         """
@@ -263,6 +290,8 @@ class DataLoader:
             ):
                 continue
             series = df[col].dropna()
+            # 统一转为 object 以便 apply 操作
+            series = series.astype(object)
             if len(series) == 0:
                 continue
 

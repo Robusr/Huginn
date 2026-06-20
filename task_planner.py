@@ -248,6 +248,22 @@ class TaskPlanner:
         chi_count = sum(1 for t in tasks if t["method"] == "卡方检验")
         t_count = sum(1 for t in tasks if t["method"] in ["t检验", "配对t检验"])
 
+        # 预筛选可用列
+        multi_cats = [c for c in self.column_info
+                      if self.column_info[c]["inferred_type"] == "categorical"
+                      and self.column_info[c]["unique"] >= 3
+                      and c not in _exclude_columns]
+        categorical_cols = [c for c in self.column_info
+                            if self.column_info[c]["inferred_type"] == "categorical"
+                            and c not in _exclude_columns]
+        binary_cats = [c for c in self.column_info
+                       if self.column_info[c]["inferred_type"] == "categorical"
+                       and self.column_info[c]["unique"] == 2
+                       and c not in _exclude_columns]
+        numeric_cols = [c for c in self.column_info
+                        if self.column_info[c]["inferred_type"].startswith("numeric")
+                        and c not in _exclude_columns]
+
         # 补充ANOVA到最低要求
         while anova_count < Config.TASK_MIN_REQUIREMENTS["ANOVA"]:
             multi_cats = [c for c in self._categorical_columns_for_defaults() if self.column_info[c]["unique"] >= 3]

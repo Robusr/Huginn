@@ -3,7 +3,7 @@
 @File    : agent_runner.py
 @Author  : Robusr
 @Date    : 2026/6/10 16:31
-@Description: 请在此处填写文件功能描述
+@Description: 智能体主流程控制器 — 域感知 · 多轮 LLM · 证据驱动
 @Software: PyCharm
 """
 
@@ -30,6 +30,8 @@ from domain_context import detect_domain_context
 from logger import get_logger
 from llm_client import LLMClient
 from task_planner import TaskPlanner
+from domain_registry import detect_domain, get_domain_config, RETAIL_SALES
+from field_registry import build_field_registry, save_field_registry
 
 logger = get_logger(__name__)
 
@@ -141,14 +143,16 @@ def run_agent(
         file_path: str,
         user_requirement: str,
         output_dir: str = "./outputs",
-        offline_mode: bool = False
+        offline_mode: bool = False,
+        domain_key: str = None,
 ) -> Path:
     """
-    运行完整的数据分析智能体流程
+    运行完整的数据分析智能体流程。
     :param file_path: 数据文件路径（.csv/.xlsx）
     :param user_requirement: 用户输入的分析需求
     :param output_dir: 输出目录
     :param offline_mode: 离线模式，不调用API
+    :param domain_key: 可选，手动指定领域（如 'retail_sales', 'education_survey'）
     :return: 本次运行的输出目录路径
     """
     fp = Path(file_path)
@@ -191,7 +195,53 @@ def run_agent(
     print(f"       数据领域: {domain_context['domain_label']}")
 
     # ------------------------------
-    # 步骤3：LLM生成候选分析问题
+    # 步骤2a：领域检测
+    # ------------------------------
+    print("\n[2a] 检测数据领域...")
+    column_names = list(df.columns)
+    if domain_key:
+        domain_config = get_domain_config(domain_key=domain_key)
+        print(f"      手动指定领域: {domain_config.name} ({domain_config.key})")
+    else:
+        domain_config = detect_domain(column_names)
+        print(f"      自动检测领域: {domain_config.name} ({domain_config.key})")
+
+    # 确定激活的业务分析模块
+    active_business_modules = [
+        m for m in Config.DOMAIN_MODULES.get(domain_config.key, [])
+        if Config.BUSINESS_MODULES_ENABLED.get(m, False)
+    ]
+    if active_business_modules:
+        print(f"      激活业务模块: {', '.join(active_business_modules)}")
+
+    # ------------------------------
+    # 步骤2b：构建字段角色注册表
+    # ------------------------------
+    print("\n[2b] 构建字段角色注册表...")
+    field_registry = build_field_registry(data_profile, domain_config)
+    reg_path = save_field_registry(field_registry, str(run_dir))
+    reg_sum = field_registry.get("summary", {})
+    print(f"      ID字段: {', '.join(reg_sum.get('id_fields', [])) or '无'}")
+    print(f"      收入字段: {', '.join(reg_sum.get('revenue_fields', [])) or '无'}")
+    print(f"      利润字段: {', '.join(reg_sum.get('profit_fields', [])) or '无'}")
+    print(f"      折扣字段: {', '.join(reg_sum.get('discount_fields', [])) or '无'}")
+    print(f"      维度字段: {len(reg_sum.get('dimension_fields', []))} 个")
+    meaningless = reg_sum.get("meaningless_fields", [])
+    if meaningless:
+        print(f"      无意义字段（已过滤）: {', '.join(meaningless)}")
+
+    # 打印 banner
+    print("\n" + "=" * 70)
+    print(f"   {domain_config.name}分析智能体 {Config.APP_VERSION}")
+    print(f"   文件: {fp.name}")
+    print(f"   需求: {user_requirement}")
+    print(f"   输出: {run_dir.resolve()}")
+    print(f"   模式: {'离线演示' if offline_mode else '在线API'}")
+    print(f"   领域: {domain_config.name}")
+    print("=" * 70)
+
+    # ------------------------------
+    # 步骤3：LLM 第1轮 — 生成候选分析任务
     # ------------------------------
     print("\n[3/11] 模型第1轮：规划合法统计任务...")
     llm_client = LLMClient(offline_mode=offline_mode)
@@ -210,6 +260,14 @@ def run_agent(
         domain_context=domain_context,
     )
     print(f"       生成候选问题: {len(candidate_questions)} 个")
+    llm_audit["calls"].append({
+        "round": 1,
+        "round_name": "task_planning",
+        "model": llm_client.model if not offline_mode else "offline",
+        "success": True,
+        "timestamp": datetime.now().isoformat(),
+    })
+    llm_audit["actual_rounds"] += 1
 
     # ------------------------------
     # 步骤4：筛选可执行任务
@@ -417,10 +475,17 @@ if __name__ == "__main__":
     parser.add_argument("file_path", help="数据文件路径（.csv/.xlsx）")
     parser.add_argument("requirement", help="分析需求，例如：'分析销售与利润并提出经营建议'")
     parser.add_argument("--offline", action="store_true", help="离线模式，不调用API")
+    parser.add_argument("--domain", type=str, default=None,
+                       help="手动指定领域 (retail_sales/education_survey/general_business)")
     args = parser.parse_args()
 
     try:
-        run_agent(args.file_path, args.requirement, offline_mode=args.offline)
+        run_agent(
+            args.file_path,
+            args.requirement,
+            offline_mode=args.offline,
+            domain_key=args.domain,
+        )
     except Exception as e:
         logger.critical("智能体管线运行失败", exc_info=True)
         print(f"\nError 运行失败: {str(e)}")

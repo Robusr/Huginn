@@ -48,6 +48,7 @@ class ReportGenerator:
         self,
         run_dir: Union[str, Path],
         user_requirement: str = "",
+        domain_config=None,
     ) -> None:
         self.run_dir = Path(run_dir)
         self.user_requirement = user_requirement or Config.DEFAULT_REQUIREMENT
@@ -73,6 +74,10 @@ class ReportGenerator:
         self.heatmap_pairs: List[Dict[str, Any]] = []
         self.chart_notes: List[Dict[str, Any]] = []
         self.sections_cache: Optional[List[Dict[str, Any]]] = None
+
+    @property
+    def is_education(self) -> bool:
+        return self.domain_config is not None and self.domain_config.key == "education_survey"
 
     # ==================================================================
     # Public API
