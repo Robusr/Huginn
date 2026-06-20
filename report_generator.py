@@ -9,8 +9,7 @@
 
 """
 报告生成器
-功能：读取 agent_runner.py 生成的标准化中间结果，自动生成符合课程作业要求的
-      完整 Markdown 报告（7章 + 附录）。
+功能：读取 agent_runner.py 生成的标准化中间结果，自动生成域自适应的完整报告。
 用法：
     python report_generator.py outputs/<run_dir> "用户分析需求"
     python report_generator.py outputs/<run_dir> "用户分析需求" --format word
@@ -29,17 +28,18 @@ logger = get_logger(__name__)
 
 
 class ReportGenerator:
-    """完整报告生成器：读取中间 JSON → 组装 7 章 Markdown 报告。"""
+    """域自适应报告生成器：读取中间 JSON → 组装完整 Markdown 报告。"""
 
-    # 报告章节定义
-    CHAPTERS = [
+    # 默认章节（不含业务模块章）
+    _BASE_CHAPTERS = [
         "一、数据来源与分析目标",
         "二、数据概况与预处理",
         "三、描述性统计与可视化",
         "四、统计推断分析",
-        "五、主要数据发现",
-        "六、课程改进建议",
-        "七、局限性说明",
+        "五、业务模块分析",
+        "六、主要数据发现",
+        "七、改进建议",
+        "八、局限性说明",
     ]
 
     # 图表中文描述映射
@@ -49,14 +49,33 @@ class ReportGenerator:
         self,
         run_dir: Union[str, Path],
         user_requirement: str = "",
+        domain_config=None,
     ) -> None:
         """
-        初始化报告生成器
+        初始化报告生成器。
         :param run_dir: agent_runner.py 输出的运行目录路径
         :param user_requirement: 用户输入的分析需求
+        :param domain_config: 领域配置（DomainConfig）
         """
         self.run_dir = Path(run_dir)
         self.user_requirement = user_requirement
+        self.domain_config = domain_config
+
+        # 域自适应章节
+        if domain_config and domain_config.key == "education_survey":
+            self.CHAPTERS = [
+                "一、数据来源与分析目标",
+                "二、数据概况与预处理",
+                "三、描述性统计与可视化",
+                "四、统计推断分析",
+                "五、主要数据发现",
+                "六、课程改进建议",
+                "七、局限性说明",
+            ]
+            self.has_business_chapter = False
+        else:
+            self.CHAPTERS = self._BASE_CHAPTERS
+            self.has_business_chapter = True
 
         # 数据容器
         self.data_profile: Dict[str, Any] = {}
@@ -66,9 +85,20 @@ class ReportGenerator:
         self.valid_tasks: List[Dict] = []
         self.validation_result: Dict[str, Any] = {}
         self.chart_files: List[str] = []
+        self.evidence_table: Dict[str, Any] = {}
+        self.loss_driver: Dict[str, Any] = {}
+        self.discount_analysis: Dict[str, Any] = {}
+        self.pareto_results: Dict[str, Any] = {}
+        self.cross_dim_results: Dict[str, Any] = {}
+        self.granularity: Dict[str, Any] = {}
+        self.field_registry: Dict[str, Any] = {}
 
         # 报告生成时间
         self.generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    @property
+    def is_education(self) -> bool:
+        return self.domain_config is not None and self.domain_config.key == "education_survey"
 
     # ==================================================================
     # 公开 API
@@ -209,6 +239,13 @@ class ReportGenerator:
         self.suggestions = self._load_json_list("suggestions.json")
         self.valid_tasks = self._load_json_list("valid_tasks.json")
         self.validation_result = self._load_json("validation_result.json", required=False)
+        self.evidence_table = self._load_json("evidence_table.json", required=False)
+        self.field_registry = self._load_json("field_registry.json", required=False)
+        self.granularity = self._load_json("granularity.json", required=False)
+        self.loss_driver = self._load_json("loss_driver_results.json", required=False)
+        self.discount_analysis = self._load_json("discount_analysis_results.json", required=False)
+        self.pareto_results = self._load_json("pareto_results.json", required=False)
+        self.cross_dim_results = self._load_json("cross_dimension_results.json", required=False)
 
     def _load_json(self, filename: str, required: bool = False) -> Dict[str, Any]:
         """加载单个 JSON 文件。"""
@@ -260,7 +297,6 @@ class ReportGenerator:
 
     def _render_report(self) -> List[str]:
         """渲染完整报告。"""
-        profile_meta = self.data_profile.get("meta", {})
         lines: List[str] = []
 
         # 报告头
@@ -274,15 +310,17 @@ class ReportGenerator:
         lines.extend(self._render_chapter_2())
         lines.extend(self._render_chapter_3())
         lines.extend(self._render_chapter_4())
-        lines.extend(self._render_chapter_5())
-        lines.extend(self._render_chapter_6())
-        lines.extend(self._render_chapter_7())
+        if self.has_business_chapter:
+            lines.extend(self._render_chapter_5_business())
+        lines.extend(self._render_chapter_findings())
+        lines.extend(self._render_chapter_suggestions())
+        lines.extend(self._render_chapter_limitations())
 
         # 附录
         lines.extend(self._render_appendix())
 
         # 页脚
-        lines.extend(self._render_footer(profile_meta))
+        lines.extend(self._render_footer())
 
         return lines
 
@@ -295,17 +333,25 @@ class ReportGenerator:
         n_rows = profile_meta.get("n_rows", "?")
         n_cols = profile_meta.get("n_columns", "?")
 
+        # 域自适应标题
+        if self.domain_config:
+            report_title = self.domain_config.report_title
+            report_subtitle = self.domain_config.report_subtitle
+        else:
+            fp_stem = self.run_dir.name.split("_", 1)[-1] if "_" in self.run_dir.name else ""
+            report_title = f"{fp_stem}数据分析报告" if fp_stem else "数据分析报告"
+            report_subtitle = "基于数据探索的分析与建议"
+
         lines = [
-            "# 课程问卷数据统计分析报告",
+            f"# {report_title}",
             "",
             f"> **生成时间**：{self.generated_at}",
             f"> **数据规模**：{n_rows} 行 × {n_cols} 列",
-            f"> **分析需求**：{self.user_requirement if self.user_requirement else '探索型数据分析'}",
-            f"> **报告版本**：Huginn v1.0 自动生成",
-            "",
-            "---",
-            "",
         ]
+        if self.user_requirement:
+            lines.append(f"> **分析需求**：{self.user_requirement}")
+        lines.append(f"> **报告版本**：Huginn {Config.APP_VERSION} 自动生成")
+        lines.extend(["", "---", ""])
 
         # 执行摘要
         lines.extend(self._render_executive_summary())
@@ -315,45 +361,32 @@ class ReportGenerator:
         """生成执行摘要，快速概览报告核心发现。"""
         lines = ["## 执行摘要", ""]
 
-        # 数据概览
         meta = self.data_profile.get("meta", {})
-        overview = self.data_profile.get("overview", {})
         n_rows = meta.get("n_rows", "?")
-        n_cols = meta.get("n_columns", "?")
-        field_types = overview.get("field_type_counts", {})
 
-        lines.append(f"本报告基于 **{n_rows}** 份有效问卷、**{n_cols}** 个调查维度，")
-        lines.append(f"共执行 **{len(self.valid_tasks)}** 项统计分析任务。")
-        lines.append("")
+        # 粒度信息
+        gran_note = ""
+        if self.granularity:
+            ent = self.granularity.get("entity_description", "")
+            if ent:
+                gran_note = f"（{ent}）"
+        lines.append(f"本报告基于 **{n_rows}** 条数据记录{gran_note}。")
 
         # 显著结果统计
         sig = self._extract_significant_results()
-        n_sig_hypothesis = len(sig.get("hypothesis", []))
-        n_sig_anova = len(sig.get("anova", []))
-        n_sig_chi = len(sig.get("chi_square", []))
-        total_sig = n_sig_hypothesis + n_sig_anova + n_sig_chi
+        total_sig = len(sig.get("hypothesis", [])) + len(sig.get("anova", [])) + len(sig.get("chi_square", []))
 
         if total_sig > 0:
-            lines.append(f"### 关键发现")
-            lines.append(f"- 共发现 **{total_sig}** 个统计显著结果（p<0.05）")
-            if n_sig_anova > 0:
-                lines.append(f"- **{n_sig_anova}** 个 ANOVA 检验发现组间显著差异")
-            if n_sig_chi > 0:
-                lines.append(f"- **{n_sig_chi}** 个卡方检验发现类别分布显著不均")
-            if n_sig_hypothesis > 0:
-                lines.append(f"- **{n_sig_hypothesis}** 个假设检验拒绝原假设")
+            lines.append(f"共发现 **{total_sig}** 个统计显著结果（p<0.05），涵盖组间差异、分类关联和分布特征。")
         else:
-            lines.append(f"### 关键发现")
-            lines.append(f"> ⚠️ 本次分析未发现统计显著（p<0.05）的结果。")
-            lines.append(f"> 可能原因：样本量较小（n={n_rows}）、变量间真实差异不大、或测量精度有限。")
-            lines.append(f"> 以下报告基于描述性统计和探索性分析提供观察性建议。")
+            lines.append("本次分析未发现统计显著（p<0.05）的结果，以下基于描述性统计和探索性分析。")
 
-        # 验证得分（如果有）
+        # 验证得分
         val_score = self.validation_result.get("meta", {}).get("score")
         if val_score is not None:
             val_pass = self.validation_result.get("meta", {}).get("overall_pass", False)
-            status = "✅ 通过" if val_pass else "⚠️ 待改进"
-            lines.append(f"- 合规性验证得分：**{val_score}/100**（{status}）")
+            status = "✅" if val_pass else "⚠️"
+            lines.append(f"合规性: {status} {val_score}/100")
 
         lines.extend(["", "---", ""])
         return lines
@@ -380,36 +413,36 @@ class ReportGenerator:
             "",
             "## 1.1 数据来源",
             "",
-            f"本报告所分析的数据来源于课程问卷调研，共收集有效样本 **{n_rows}** 份，",
-            f"涵盖 **{n_cols}** 个调查维度。数据通过标准化问卷形式采集，",
-            "包含学生对课程内容、教学方式、学习效果、满意度等方面的反馈信息。",
+        ]
+
+        if self.is_education:
+            lines.append(f"本报告所分析的数据来源于课程问卷调研，共收集有效样本 **{n_rows}** 份，"
+                         f"涵盖 **{n_cols}** 个调查维度。")
+        elif self.granularity:
+            lines.append(f"本报告基于 **{n_rows}** 条数据记录进行分析。")
+            lines.append(f"**数据粒度**：{self.granularity.get('entity_description', '明细行')}")
+            lines.append(f"**唯一订单数**：{self.granularity.get('unique_order_ids', '未知')}")
+            lines.append(f"**唯一客户数**：{self.granularity.get('unique_customer_ids', '未知')}")
+        else:
+            lines.append(f"本报告基于 **{n_rows}** 条数据记录、**{n_cols}** 个字段进行分析。")
+
+        lines.extend([
             "",
             "## 1.2 分析目标",
             "",
-        ]
+        ])
 
         if self.user_requirement:
-            lines.append(f"本次分析的核心目标为：**{self.user_requirement}**。")
+            lines.append(f"核心目标：**{self.user_requirement}**。")
         else:
-            lines.append("本次分析的核心目标为：对课程问卷数据进行探索型统计分析，")
+            lines.append("核心目标：对数据进行探索型统计分析，发现模式、诊断问题、提出改进建议。")
 
         lines.extend([
-            "具体包括：",
             "",
-            "1. **数据理解**：全面了解数据的基本结构、字段类型分布和数据质量状况",
-            "2. **描述分析**：通过描述性统计和可视化手段，直观展示各维度的分布特征",
-            "3. **统计推断**：运用假设检验、方差分析、卡方检验等方法，",
-            "   检验不同群体、不同模块之间是否存在统计显著差异",
-            "4. **发现提炼**：基于统计结果提炼核心数据发现，为教学改进提供数据支撑",
-            "5. **改进建议**：基于数据发现，提出具体可落地的课程改进建议",
-            "",
-            "## 1.3 分析方法概述",
-            "",
-            f"本报告共执行了 **{len(self.valid_tasks)}** 项统计分析任务，涵盖以下方法：",
+            f"共执行 **{len(self.valid_tasks)}** 项统计分析任务，涵盖以下方法：",
             "",
         ])
 
-        # 统计方法分布
         method_counts: Dict[str, int] = {}
         for task in self.valid_tasks:
             m = task.get("method", "其他")
@@ -885,12 +918,271 @@ class ReportGenerator:
         return lines
 
     # ==================================================================
-    # 第五章：主要数据发现
+    # 第五章（业务模块分析）
     # ==================================================================
 
-    def _render_chapter_5(self) -> List[str]:
+    def _render_chapter_5_business(self) -> List[str]:
+        """渲染业务模块分析章节（零售等非教育域）。"""
         lines = [
-            "# 五、主要数据发现",
+            "# 五、业务模块分析",
+            "",
+        ]
+
+        has_content = False
+
+        # 5.1 数据粒度
+        if self.granularity:
+            has_content = True
+            lines.extend([
+                "## 5.1 数据粒度与实体识别",
+                "",
+                f"- **行级实体**：{self.granularity.get('entity_description', '未知')}",
+                f"- **总记录数**：{self.granularity.get('row_count', '?')}",
+                f"- **唯一订单数**：{self.granularity.get('unique_order_ids', '?')}",
+                f"- **唯一客户数**：{self.granularity.get('unique_customer_ids', '?')}",
+                f"- **唯一产品数**：{self.granularity.get('unique_product_ids', '?')}",
+                "",
+                "> ⚠️ **重要**：以下所有比率分析均已明确分母。亏损明细率 ≠ 亏损订单率 ≠ 亏损客户率。",
+                "",
+            ])
+
+        # 5.2 亏损驱动分析
+        loss = self.loss_driver
+        if loss and loss.get("is_viable"):
+            has_content = True
+            lines.extend([
+                "## 5.2 亏损驱动分析",
+                "",
+            ])
+
+            # 总体指标
+            ov = loss.get("overall_summary", {})
+            if ov:
+                lines.extend([
+                    "| 指标 | 数值 |",
+                    "|------|------|",
+                    f"| 总销售额 | {ov.get('total_sales', '?'):,.2f} |",
+                    f"| 总利润 | {ov.get('total_profit', '?'):,.2f} |",
+                    f"| 总体亏损率（明细行） | {ov.get('overall_loss_rate', 0)*100:.2f}% |",
+                    f"| 总体利润率 | {ov.get('overall_profit_margin', '?'):.2f}% |",
+                    "",
+                ])
+
+            # 主要亏损来源（合并所有维度）
+            top_contributors = loss.get("top_loss_contributors", [])
+            if top_contributors:
+                lines.extend([
+                    "### 主要亏损来源（按亏损贡献率排序）",
+                    "",
+                    "| 维度 | 分类 | 销售额 | 利润 | 利润率 | 亏损率 | 亏损金额 | 亏损贡献% | 平均折扣 |",
+                    "|------|------|--------|------|--------|--------|----------|-----------|----------|",
+                ])
+                for item in top_contributors[:10]:
+                    dim = item.get("dimension_display", "")
+                    name = item.get("name", "")
+                    sales = item.get("total_sales", 0)
+                    profit = item.get("total_profit", 0)
+                    margin = item.get("profit_margin", 0)
+                    loss_rate = item.get("loss_rate", 0) * 100
+                    loss_amt = item.get("loss_amount", 0)
+                    loss_pct = item.get("loss_contribution_pct", 0)
+                    avg_disc = item.get("avg_discount", 0)
+                    disc_str = f"{avg_disc*100:.1f}%" if avg_disc else "-"
+                    lines.append(
+                        f"| {dim} | {name} | {sales:,.0f} | {profit:,.0f} | "
+                        f"{margin:.1f}% | {loss_rate:.1f}% | {loss_amt:,.0f} | "
+                        f"{loss_pct:.1f}% | {disc_str} |"
+                    )
+                lines.append("")
+
+                # 亏损集中度摘要
+                dim_results = loss.get("dimension_results", {})
+                for dim_name, dim_result in dim_results.items():
+                    if isinstance(dim_result, dict) and "summary" in dim_result:
+                        summary = dim_result["summary"]
+                        name = summary.get("largest_loss_contributor", {})
+                        if name:
+                            lines.append(
+                                f"- **{dim_result.get('dimension_display', dim_name)}**："
+                                f"最大亏损来源为「{name.get('name', '?')}」"
+                                f"（亏损贡献 {name.get('loss_contribution_pct', 0):.1f}%），"
+                                f"{summary.get('loss_concentration', '')}"
+                            )
+                lines.append("")
+
+        # 5.3 折扣响应分析
+        disc = self.discount_analysis
+        if disc and disc.get("is_viable"):
+            has_content = True
+            lines.extend([
+                "## 5.3 折扣响应分析",
+                "",
+            ])
+
+            # 总体折扣统计
+            ov = disc.get("overall_summary", {})
+            if ov:
+                lines.extend([
+                    f"- 平均折扣率：{ov.get('mean_discount', 0)*100:.1f}%",
+                    f"- 中位数折扣率：{ov.get('median_discount', 0)*100:.1f}%",
+                    f"- 打折交易占比：{ov.get('discount_rate', 0)*100:.1f}%",
+                    "",
+                ])
+
+            # 折扣分箱
+            bins = disc.get("discount_bins", {}).get("bins", [])
+            if bins:
+                lines.extend([
+                    "### 折扣分箱分析",
+                    "",
+                    "| 折扣区间 | 交易数 | 总销售额 | 平均销售额 | 总利润 | 平均利润 |",
+                    "|----------|--------|----------|------------|--------|----------|",
+                ])
+                for b in bins:
+                    lines.append(
+                        f"| {b.get('bin', '?')} | {b.get('count', 0)} | "
+                        f"{b.get('total_sales', 0):,.0f} | {b.get('avg_sales', 0):,.0f} | "
+                        f"{b.get('total_profit', 0):,.0f} | {b.get('avg_profit', 0):,.0f} |"
+                    )
+                lines.append("")
+
+            # 利润率阈值
+            tp = disc.get("profit_tipping_point", {})
+            if tp and tp.get("tipping_bin"):
+                lines.extend([
+                    "### 折扣阈值分析",
+                    "",
+                    f"**{tp.get('description', '')}**",
+                    "",
+                ])
+
+            # 异常检测
+            anomalies = disc.get("anomalies", {})
+            if anomalies and anomalies.get("anomaly_count", 0) > 0:
+                lines.extend([
+                    "### 高折扣异常检测",
+                    "",
+                    f"{anomalies.get('summary', '')}",
+                    "",
+                ])
+
+        # 5.4 集中度与帕累托分析
+        pareto = self.pareto_results
+        if pareto and pareto.get("is_viable"):
+            has_content = True
+            lines.extend([
+                "## 5.4 集中度与帕累托分析",
+                "",
+            ])
+
+            for key in ["product_concentration", "customer_concentration", "subcategory_concentration"]:
+                conc = pareto.get(key, {})
+                if not conc or "error" in conc:
+                    continue
+                label = conc.get("label", key)
+                metrics = conc.get("concentration_metrics", {})
+                lines.extend([
+                    f"### {label}集中度",
+                    "",
+                    f"- 前5个{label}贡献: **{metrics.get('top5_pct', 0):.1f}%** 的销售额",
+                    f"- 前20%的{label}贡献: **{metrics.get('top20_pct', 0):.1f}%**",
+                    f"- 覆盖80%销售额需要: **{metrics.get('items_needed_for_80pct', '?')}** 个{label}",
+                    f"  （占全部{conc.get('total_items', '?')}个{label}的{metrics.get('pct_items_for_80pct', 0):.1f}%）",
+                    "",
+                ])
+                # Top-N表
+                top_items = conc.get("top_items", [])[:10]
+                if top_items:
+                    lines.extend([
+                        "| 排名 | 名称 | 销售额 | 占总比% | 累计% | 利润 | 利润率% |",
+                        "|------|------|--------|---------|-------|------|---------|",
+                    ])
+                    for item in top_items:
+                        lines.append(
+                            f"| {item.get('rank', '?')} | {item.get('name', '?')[:30]} | "
+                            f"{item.get('total_value', 0):,.0f} | {item.get('pct_of_total', 0):.1f}% | "
+                            f"{item.get('cumulative_pct', 0):.1f}% | "
+                            f"{item.get('total_profit', 0):,.0f} | {item.get('profit_margin', 0):.1f}% |"
+                        )
+                    lines.append("")
+
+            # 异常对象
+            hs_lp = pareto.get("high_sales_low_profit", {})
+            if hs_lp and hs_lp.get("count", 0) > 0:
+                lines.extend([
+                    "### 高销售低利润商品",
+                    "",
+                    f"{hs_lp.get('summary', '')}",
+                    "",
+                ])
+
+            ls_hl = pareto.get("low_sales_high_loss", {})
+            if ls_hl and ls_hl.get("count", 0) > 0:
+                lines.extend([
+                    "### 低销售高亏损商品",
+                    "",
+                    f"{ls_hl.get('summary', '')}",
+                    "",
+                ])
+
+        # 5.5 交叉维度分析
+        cross = self.cross_dim_results
+        if cross and cross.get("is_viable"):
+            combos = cross.get("combinations", [])
+            if combos:
+                has_content = True
+                lines.extend([
+                    "## 5.5 交叉维度洞察",
+                    "",
+                ])
+                for combo in combos:
+                    if "error" in combo:
+                        continue
+                    label = combo.get("label", "")
+                    n_patterns = combo.get("n_notable_patterns", 0)
+                    lines.append(f"### {label}（{n_patterns} 个显著交互模式）")
+                    patterns = combo.get("top_patterns", [])[:8]
+                    if patterns:
+                        lines.extend([
+                            "| 维度1 | 维度2 | 销售额 | 交易数 | 利润率 |",
+                            "|-------|-------|--------|--------|--------|",
+                        ])
+                        for p in patterns:
+                            lines.append(
+                                f"| {p.get('dim1', '?')} | {p.get('dim2', '?')} | "
+                                f"{p.get('total_sales', 0):,.0f} | {p.get('transaction_count', 0)} | "
+                                f"{p.get('profit_margin', 0):.1f}% |"
+                            )
+                    lines.append("")
+
+        if not has_content:
+            lines.append("*当前数据不支持业务模块分析，或业务模块分析未生成结果。*")
+            lines.append("")
+
+        lines.extend(["---", ""])
+        return lines
+
+    # ==================================================================
+    # 第五章/第六章：主要数据发现（兼容旧名称）
+    # ==================================================================
+
+    def _render_chapter_findings(self) -> List[str]:
+        """数据发现章节（域自适应标题）。"""
+        return self._render_chapter_5()
+
+    def _render_chapter_suggestions(self) -> List[str]:
+        """改进建议章节（域自适应标题）。"""
+        return self._render_chapter_6()
+
+    def _render_chapter_limitations(self) -> List[str]:
+        """局限性说明章节。"""
+        return self._render_chapter_7()
+
+    # 保留旧方法名以保证向后兼容
+    def _render_chapter_5(self) -> List[str]:
+        chapter_title = "五、课程改进建议" if self.is_education else "六、主要数据发现" if self.has_business_chapter else "五、主要数据发现"
+        lines = [
+            f"# {chapter_title}",
             "",
         ]
 
@@ -954,8 +1246,9 @@ class ReportGenerator:
     # ==================================================================
 
     def _render_chapter_6(self) -> List[str]:
+        chapter_title = "六、课程改进建议" if self.is_education else "七、改进建议" if self.has_business_chapter else "六、改进建议"
         lines = [
-            "# 六、课程改进建议",
+            f"# {chapter_title}",
             "",
         ]
 
@@ -1004,8 +1297,9 @@ class ReportGenerator:
         n_rows = profile_meta.get("n_rows", "未知")
         total_missing_pct = profile_meta.get("total_missing_pct", 0)
 
+        chapter_title = "七、局限性说明" if self.is_education else "八、局限性说明" if self.has_business_chapter else "七、局限性说明"
         lines = [
-            "# 七、局限性说明",
+            f"# {chapter_title}",
             "",
             "本报告的分析结果受到以下因素的制约，在解读和使用时需要审慎考虑：",
             "",
@@ -1133,14 +1427,14 @@ class ReportGenerator:
     # 页脚
     # ==================================================================
 
-    def _render_footer(self, profile_meta: Dict) -> List[str]:
+    def _render_footer(self) -> List[str]:
         return [
             "",
             "---",
             "",
-            f"*本报告由 Huginn 数据分析智能体自动生成（版本 v1.0）*",
+            f"*本报告由 Huginn 数据分析智能体自动生成（版本 {Config.APP_VERSION}）*",
             f"*生成时间：{self.generated_at}*",
-            f"*所有统计量由 Python（scipy + statsmodels）真实计算，可溯源至 stats_results.json 和 data_profile.json*",
+            f"*所有统计量由 Python（scipy + statsmodels）真实计算，可溯源至 stats_results.json*",
             "",
         ]
 
