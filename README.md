@@ -58,8 +58,8 @@ No need to specify analysis questions. The agent automatically understands data 
 ### Automatic Compliance Verification
 Built-in multi-domain validator that runs automatically after analysis and is written to the report appendix:
 - **Statistical Quantity (30 pts)**: >=5 point estimates / >=5 interval estimates / >=5 hypothesis tests / >=2 ANOVA / >=2 chi-square
-- **Statistical Validity (20 pts)**: p-value range (supports scientific notation: `3.7e-118`), sample size, no fabricated data
-- **Findings Compliance (20 pts)**: no causal errors, no vague expressions, correct citations
+- **Statistical Validity (20 pts)**: p-value range (supports scientific notation: `3.7e-118`), **smart non-significance detection** (recognizes 10+ Chinese phrases like "未检测到显著差异"), sample size validation
+- **Findings Compliance (20 pts)**: hierarchical stat-key prefix matching, **data-quality context awareness** (allows "导致" in missing-value/sample-size statements), no causal errors, correct citations
 - **Business Analysis Coverage (10 pts)**: whether business analysis modules are fully covered
 - **Suggestion Quality (10 pts)**: data-backed, actionable
 - **Report Completeness (10 pts)**: complete chapters, comprehensive appendix
@@ -374,8 +374,10 @@ Huginn/
 - 6 modules, 20+ check items covering multi-domain acceptance criteria
 - **Scoring weights**: statistical quantity (30 pts) + statistical validity (20 pts) + findings compliance (20 pts) + business coverage (10 pts) + suggestion quality (10 pts) + report completeness (10 pts)
 - 100-point scoring system, 60 points to pass
-- **Intelligent evidence checking**: accepts both hypothesis test (t/F/chi-squared + p-value) and descriptive statistics (mean/std/CV) evidence formats
+- **Intelligent evidence checking**: accepts both hypothesis test (t/F/chi-squared + p-value) and descriptive statistics (mean/std/CV) evidence formats; **hierarchical prefix matching** resolves `distribution_tests.CRIM` → `distribution_tests.CRIM.shapiro_wilk`
 - **Scientific notation p-value parsing**: correctly interprets `p=3.7e-118` (as 3.7×10⁻¹¹⁸) rather than misreading it as p=3.7; also handles `p≈` and whitespace variants
+- **Smart non-significance detection**: recognizes 10+ Chinese phrases (不显著, 无显著, 未达显著, 未检测到显著, 未见显著, 没有显著, 无明显差异, 无统计学意义, etc.) to avoid false positives
+- **Context-aware causal word checking**: exempts 导致/造成/使得/引起 in data-quality contexts (缺失值, 样本量, 数据质量) where the causal language describes factual data issues rather than statistical misinterpretation
 - **Intelligent vague word detection**: excludes words naturally contained in survey field names
 - **Business analysis coverage check**: verifies complete coverage of 4 retail business modules
 - Auto-checks limitations chapter in `final_report.md`
