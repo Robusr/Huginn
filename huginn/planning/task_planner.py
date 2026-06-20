@@ -142,7 +142,7 @@ class TaskPlanner:
         return True, ""
 
     def _validate_anova(self, variables: List[str]) -> tuple[bool, str]:
-        """ANOVA：1个数值变量 + 1个多分类变量（≥3组）"""
+        """ANOVA：1个数值变量 + 1个多分类变量（≥3组，含numeric_discrete列）"""
         if len(variables) != 2:
             return False, "ANOVA需要恰好2个变量"
 
@@ -151,10 +151,22 @@ class TaskPlanner:
             return False, f"变量{num_var}不是数值型"
 
         cat_info = self.column_info[cat_var]
-        if cat_info["inferred_type"] != "categorical" or cat_info["unique"] < 3:
-            return False, f"变量{cat_var}不是多分类变量（需要至少3个类别）"
-        if cat_info["unique"] > Config.ANALYSIS_MAX_GROUPS:
-            return False, f"变量{cat_var}类别数过多（最多{Config.ANALYSIS_MAX_GROUPS}个类别）"
+        cat_type = cat_info.get("inferred_type", "")
+        cat_unique = cat_info.get("unique", 0)
+
+        # 接受纯分类变量 或 具有≥3个唯一值的 numeric_discrete 列作为分组因子
+        if cat_type == "categorical":
+            if cat_unique < 3:
+                return False, f"变量{cat_var}不是多分类变量（需要至少3个类别）"
+            if cat_unique > Config.ANALYSIS_MAX_GROUPS:
+                return False, f"变量{cat_var}类别数过多（最多{Config.ANALYSIS_MAX_GROUPS}个类别）"
+        elif cat_type == "numeric_discrete":
+            if cat_unique < 3:
+                return False, f"变量{cat_var}唯一值不足3个，无法作为ANOVA分组因子"
+            if cat_unique > Config.ANALYSIS_MAX_GROUPS:
+                return False, f"变量{cat_var}唯一值过多（最多{Config.ANALYSIS_MAX_GROUPS}个类别）"
+        else:
+            return False, f"变量{cat_var}不是分类或离散数值型，无法作为ANOVA分组因子"
 
         return True, ""
 
@@ -204,7 +216,7 @@ class TaskPlanner:
         numeric_cols = self._numeric_columns_for_defaults()
         categorical_cols = self._categorical_columns_for_defaults()
         binary_cats = [c for c in categorical_cols if self.column_info[c]["unique"] == 2]
-        multi_cats = [c for c in categorical_cols if self.column_info[c]["unique"] >= 3]
+        multi_cats = [c for c in self._categorical_columns_for_defaults(anova_mode=True) if self.column_info[c]["unique"] >= 3]
 
         # 1. 补充ANOVA任务
         if len(multi_cats) >= 1 and len(numeric_cols) >= 1:
@@ -259,6 +271,11 @@ class TaskPlanner:
                       if self.column_info[c]["inferred_type"] == "categorical"
                       and self.column_info[c]["unique"] >= 3
                       and c not in self._exclude_columns]
+        # 扩展：纳入 numeric_discrete 列作为 ANOVA 分组候选
+        multi_cats += [c for c in self.column_info
+                       if self.column_info[c]["inferred_type"] == "numeric_discrete"
+                       and self.column_info[c]["unique"] >= 3
+                       and c not in self._exclude_columns]
         categorical_cols = [c for c in self.column_info
                             if self.column_info[c]["inferred_type"] == "categorical"
                             and c not in self._exclude_columns]
@@ -272,7 +289,7 @@ class TaskPlanner:
 
         # 补充ANOVA到最低要求
         while anova_count < Config.TASK_MIN_REQUIREMENTS["ANOVA"]:
-            multi_cats = [c for c in self._categorical_columns_for_defaults() if self.column_info[c]["unique"] >= 3]
+            multi_cats = [c for c in self._categorical_columns_for_defaults(anova_mode=True) if self.column_info[c]["unique"] >= 3]
             numeric_cols = self._numeric_columns_for_defaults()
             pair = self._first_missing_pair(tasks, "ANOVA", numeric_cols, multi_cats)
             if pair:
@@ -332,13 +349,26 @@ class TaskPlanner:
         ]
         return self._sort_by_keywords(cols, domain_keywords(self.domain_context, "metric_keywords"))
 
-    def _categorical_columns_for_defaults(self) -> List[str]:
+    def _categorical_columns_for_defaults(self, *, anova_mode: bool = False) -> List[str]:
+        """返回可用的分类/离散数值列。
+
+        anova_mode=True 时额外纳入 numeric_discrete 列（≥3 唯一值），
+        以便为缺乏纯分类变量的数据集（如 Boston Housing）自动补足 ANOVA。
+        """
         cols = [
             c for c, info in self.column_info.items()
             if info.get("inferred_type") == "categorical"
             and 2 <= info.get("unique", 0) <= Config.ANALYSIS_MAX_GROUPS
             and not self._is_noise_column(c, info)
         ]
+        if anova_mode:
+            discrete_cols = [
+                c for c, info in self.column_info.items()
+                if info.get("inferred_type") == "numeric_discrete"
+                and 3 <= info.get("unique", 0) <= Config.ANALYSIS_MAX_GROUPS
+                and not self._is_noise_column(c, info)
+            ]
+            cols = cols + discrete_cols
         return self._sort_by_keywords(cols, domain_keywords(self.domain_context, "group_keywords"))
 
     def _is_noise_column(self, column: str, info: Dict | None = None) -> bool:
