@@ -9,14 +9,15 @@
 
 """
 报告合规性验证器
-功能：自动检查是否满足课程大作业的所有验收标准
-检查项：
-1.  统计数量硬指标（5点估计/5区间估计/5假设检验/2ANOVA/2卡方）
-2.  统计结果有效性（p值范围、样本量、无编造数据）
-3.  数据发现合规性（引用正确p值、无因果错误、无模糊表述）
-4.  课程建议合理性（有数据依据、可落地）
-5.  报告完整性（数据概况、局限性说明）
-输出：JSON格式机器可读结果 + Markdown格式人类可读报告
+功能：自动检查分析报告的合规性和质量
+检查项（v2.0 重新分配权重）：
+1.  统计数量硬指标（30分——从40分降权）
+2.  统计结果有效性（20分）
+3.  数据发现合规性（20分）
+4.  业务分析覆盖度（10分——新增）
+5.  建议质量（10分——重构原课程建议合理性）
+6.  报告完整性（10分）
+输出：JSON + Markdown
 """
 import json
 import re
@@ -30,20 +31,11 @@ logger = get_logger(__name__)
 
 
 class ReportValidator:
-    # 课程作业硬性要求（从 Config 读取）
     REQUIREMENTS = Config.REQUIREMENTS
-
-    # 禁止使用的因果词汇
     CAUSAL_WORDS = Config.CAUSAL_WORDS
-
-    # 禁止使用的模糊词汇
     VAGUE_WORDS = Config.VAGUE_WORDS
 
     def __init__(self, run_dir: str):
-        """
-        初始化验证器
-        :param run_dir: agent_runner.py生成的输出目录路径
-        """
         self.run_dir = Path(run_dir)
         self.results: Dict[str, Any] = {
             "meta": {
@@ -52,29 +44,28 @@ class ReportValidator:
                 "overall_pass": False,
                 "score": 0,
                 "total_checks": 0,
-                "passed_checks": 0
+                "passed_checks": 0,
             },
             "checks": {
-                "statistical_quantity": {"pass": False, "details": [], "score": 0},
-                "statistical_validity": {"pass": False, "details": [], "score": 0},
-                "findings_compliance": {"pass": False, "details": [], "score": 0},
-                "suggestions_reasonableness": {"pass": False, "details": [], "score": 0},
-                "report_completeness": {"pass": False, "details": [], "score": 0}
+                "statistical_quantity": {"pass": False, "details": [], "score": 0, "max_score": 30},
+                "statistical_validity": {"pass": False, "details": [], "score": 0, "max_score": 20},
+                "findings_compliance": {"pass": False, "details": [], "score": 0, "max_score": 20},
+                "business_analysis_completeness": {"pass": True, "details": [], "score": 10, "max_score": 10},
+                "suggestions_quality": {"pass": False, "details": [], "score": 0, "max_score": 10},
+                "report_completeness": {"pass": False, "details": [], "score": 0, "max_score": 10},
             },
-            "improvement_suggestions": []
+            "improvement_suggestions": [],
         }
-
-        # 加载所有必要文件
         self._load_files()
 
     def _load_files(self) -> None:
-        """加载验证所需的所有JSON文件"""
+        """加载验证所需的所有JSON文件。"""
         required_files = [
             "data_profile.json",
             "stats_results.json",
             "valid_tasks.json",
             "findings.json",
-            "suggestions.json"
+            "suggestions.json",
         ]
 
         self.files = {}
@@ -91,48 +82,53 @@ class ReportValidator:
         self.findings = self.files["findings.json"]
         self.suggestions = self.files["suggestions.json"]
 
+        # 可选文件
+        self.evidence_table = self._load_optional_json("evidence_table.json")
+        self.field_registry = self._load_optional_json("field_registry.json")
+        self.granularity = self._load_optional_json("granularity.json")
+        self.loss_driver = self._load_optional_json("loss_driver_results.json")
+        self.discount_analysis = self._load_optional_json("discount_analysis_results.json")
+
+    def _load_optional_json(self, filename: str) -> dict:
+        path = self.run_dir / filename
+        if path.exists():
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        return {}
+
     def run_all_checks(self) -> Dict[str, Any]:
-        """执行所有检查项，生成完整验证报告"""
+        """执行所有检查项，生成完整验证报告。"""
         from datetime import datetime
         self.results["meta"]["generated_at"] = datetime.now().isoformat()
 
-        # 执行各模块检查
         self._check_statistical_quantity()
         self._check_statistical_validity()
         self._check_findings_compliance()
-        self._check_suggestions_reasonableness()
+        self._check_business_analysis_completeness()
+        self._check_suggestions_quality()
         self._check_report_completeness()
 
-        # 计算总分和整体通过率
-        total_score = 0
-        total_possible = 100
-        for check in self.results["checks"].values():
-            total_score += check["score"]
-
+        total_score = sum(c["score"] for c in self.results["checks"].values())
         self.results["meta"]["score"] = round(total_score, 1)
-        self.results["meta"]["overall_pass"] = total_score >= 60  # 及格线60分
+        self.results["meta"]["overall_pass"] = total_score >= 60
         self.results["meta"]["total_checks"] = sum(
             len(c["details"]) for c in self.results["checks"].values()
         )
         self.results["meta"]["passed_checks"] = sum(
-            1 for c in self.results["checks"].values() for d in c["details"] if d["pass"]
+            1 for c in self.results["checks"].values() for d in c["details"] if d.get("pass", False)
         )
 
-        # 生成整体改进建议
         self._generate_overall_suggestions()
-
-        # 保存结果
         self._save_results()
-
         return self.results
 
     # ------------------------------
     # 1. 统计数量硬指标检查（40分）
     # ------------------------------
     def _check_statistical_quantity(self) -> None:
-        """检查是否满足最低统计数量要求（核心硬指标）"""
+        """检查是否满足最低统计数量要求（权重从40降至30）。"""
         check = self.results["checks"]["statistical_quantity"]
-        check["score"] = 40  # 满分40分
+        check["score"] = check["max_score"]  # 30分
 
         # 1. 点估计数量
         pe_count = len(self.stats_results.get("point_estimation", {}).get("fields", {}))
@@ -488,32 +484,173 @@ class ReportValidator:
         check["score"] = max(0, check["score"])
 
     # ------------------------------
-    # 4. 课程建议合理性检查（10分）
+    # 4. 业务分析覆盖度检查（10分——新增）
+    # ------------------------------
+    def _check_business_analysis_completeness(self) -> None:
+        """检查业务分析模块是否按数据特征合理执行。"""
+        check = self.results["checks"]["business_analysis_completeness"]
+        check["score"] = 10
+
+        # 检查是否有利润数据但未执行亏损分析
+        has_profit = False
+        if self.field_registry:
+            reg_sum = self.field_registry.get("summary", {})
+            has_profit = reg_sum.get("has_profit_data", False)
+        if not has_profit:
+            # 回退：检查 stats_results 是否有 profit 相关
+            pe = self.stats_results.get("point_estimation", {}).get("fields", {})
+            for col in pe:
+                if "profit" in col.lower() or "利润" in col:
+                    has_profit = True
+                    break
+
+        has_discount = False
+        if self.field_registry:
+            has_discount = self.field_registry.get("summary", {}).get("has_discount_data", False)
+
+        # 亏损驱动分析检查
+        if has_profit and self.loss_driver and self.loss_driver.get("is_viable"):
+            check["details"].append({
+                "item": "亏损驱动分析",
+                "actual": "已完成",
+                "required": "数据有利润字段时应执行",
+                "pass": True,
+            })
+        elif has_profit and not self.loss_driver:
+            check["details"].append({
+                "item": "亏损驱动分析",
+                "actual": "未执行",
+                "required": "数据有利润字段时应执行",
+                "pass": False,
+                "error": "存在利润数据但未执行亏损驱动分析，报告缺少关键经营诊断",
+            })
+            check["score"] -= 3
+        else:
+            check["details"].append({
+                "item": "亏损驱动分析",
+                "actual": "不需执行（无利润数据）",
+                "required": "仅在有利数据时检查",
+                "pass": True,
+            })
+
+        # 折扣分析检查
+        if has_discount and self.discount_analysis and self.discount_analysis.get("is_viable"):
+            tp = self.discount_analysis.get("profit_tipping_point", {})
+            has_threshold = tp and tp.get("tipping_bin") is not None
+            check["details"].append({
+                "item": "折扣分析（含阈值识别）",
+                "actual": f"{'已完成（阈值={}）'.format(tp.get('tipping_bin','?')) if has_threshold else '已完成（未找到阈值）'}",
+                "required": "数据有折扣字段时应执行",
+                "pass": True,
+            })
+        elif has_discount and not self.discount_analysis:
+            check["details"].append({
+                "item": "折扣分析",
+                "actual": "未执行",
+                "required": "数据有折扣字段时应执行分层分析",
+                "pass": False,
+                "error": "存在折扣数据但未执行折扣响应分析，折扣相关结论可能不充分",
+            })
+            check["score"] -= 3
+        else:
+            check["details"].append({
+                "item": "折扣分析",
+                "actual": "不需执行（无折扣数据）",
+                "pass": True,
+            })
+
+        # 数据粒度检查
+        if self.granularity:
+            gr = self.granularity
+            check["details"].append({
+                "item": "数据粒度识别",
+                "actual": f"已识别: {gr.get('entity_description', '未知')}",
+                "required": "应明确行级实体类型",
+                "pass": True,
+            })
+        else:
+            check["details"].append({
+                "item": "数据粒度识别",
+                "actual": "未执行",
+                "required": "应识别行级实体类型",
+                "pass": False,
+                "error": "未进行数据粒度识别，可能导致比率分母错误",
+            })
+            check["score"] -= 2
+
+        # 高价值字段覆盖
+        high_value_covered = True
+        if self.field_registry:
+            reg_sum = self.field_registry.get("summary", {})
+            revenue_fields = reg_sum.get("revenue_fields", [])
+            profit_fields = reg_sum.get("profit_fields", [])
+            discount_fields = reg_sum.get("discount_fields", [])
+            dim_fields = reg_sum.get("dimension_fields", [])
+
+            coverage_issues = []
+            if revenue_fields and len(dim_fields) >= 2:
+                # 检查是否有维度×收入的交叉分析
+                tasks = self.valid_tasks
+                dim_cols_used = set()
+                for task in tasks:
+                    for var in task.get("variables", []):
+                        if var in dim_fields:
+                            dim_cols_used.add(var)
+                dim_coverage = len(dim_cols_used) / max(len(dim_fields), 1)
+                if dim_coverage < 0.3:
+                    coverage_issues.append(f"维度利用不足（{len(dim_cols_used)}/{len(dim_fields)}）")
+                    high_value_covered = False
+
+            if not coverage_issues:
+                check["details"].append({
+                    "item": "高价值字段覆盖",
+                    "actual": "关键业务字段得到合理利用",
+                    "pass": True,
+                })
+            else:
+                check["details"].append({
+                    "item": "高价值字段覆盖",
+                    "actual": "; ".join(coverage_issues),
+                    "required": "收入/利润/折扣/维度等字段应被充分分析",
+                    "pass": False,
+                    "error": "部分高价值字段未被充分利用",
+                })
+                check["score"] -= 2
+
+        check["pass"] = all(d.get("pass", False) for d in check["details"])
+        check["score"] = max(0, check["score"])
+
+    # ------------------------------
+    # 5. 建议质量检查（10分——重构）
     # ------------------------------
     def _check_suggestions_reasonableness(self) -> None:
-        """检查课程建议是否有数据依据、是否可落地"""
-        check = self.results["checks"]["suggestions_reasonableness"]
-        check["score"] = 10  # 满分10分
+        """旧名称——委托给 _check_suggestions_quality。"""
+        self._check_suggestions_quality()
+
+    def _check_suggestions_quality(self) -> None:
+        """检查建议是否有数据依据、是否具体可落地。"""
+        check = self.results["checks"]["suggestions_quality"]
+        check["score"] = check["max_score"]
 
         if not self.suggestions:
             check["details"].append({
-                "item": "课程建议数量",
+                "item": "建议数量",
                 "actual": 0,
                 "required": "≥3条",
                 "pass": False,
-                "error": "没有生成任何课程建议"
+                "error": "没有生成任何改进建议",
             })
             check["score"] = 0
             check["pass"] = False
             return
 
-        # 1. 课程建议数量≥3条
+        # 1. 建议数量
         if len(self.suggestions) >= 3:
             check["details"].append({
-                "item": "课程建议数量",
+                "item": "建议数量",
                 "actual": len(self.suggestions),
                 "required": "≥3条",
-                "pass": True
+                "pass": True,
             })
         else:
             check["details"].append({
@@ -717,11 +854,18 @@ class ReportValidator:
                 "确保每个发现都引用具体的统计量和p值"
             )
 
-        # 课程建议问题
-        if not self.results["checks"]["suggestions_reasonableness"]["pass"]:
+        # 建议质量问题
+        if not self.results["checks"]["suggestions_quality"]["pass"]:
             suggestions.append(
-                " 课程建议不够合理：请确保每个建议都有对应的数据发现，"
+                " 建议不够充分：请确保每个建议有数据依据，"
                 "并补充具体的改进措施和预期效果"
+            )
+
+        # 业务分析覆盖问题
+        if not self.results["checks"]["business_analysis_completeness"]["pass"]:
+            suggestions.append(
+                " 业务分析覆盖不足：数据中存在利润/折扣/维度等关键字段，"
+                "但未充分执行亏损驱动、折扣响应或交叉维度分析"
             )
 
         # 报告完整性问题
@@ -781,11 +925,14 @@ class ReportValidator:
                 "statistical_quantity": "统计数量硬指标",
                 "statistical_validity": "统计结果有效性",
                 "findings_compliance": "数据发现合规性",
-                "suggestions_reasonableness": "课程建议合理性",
-                "report_completeness": "报告完整性"
-            }[name]
+                "business_analysis_completeness": "业务分析覆盖度",
+                "suggestions_quality": "建议质量",
+                "report_completeness": "报告完整性",
+            }.get(name, name)
+            max_score = {"statistical_quantity": 30, "statistical_validity": 20, "findings_compliance": 20,
+                         "business_analysis_completeness": 10, "suggestions_quality": 10, "report_completeness": 10}.get(name, "?")
             result_emoji = "Done" if check["pass"] else "Error"
-            lines.append(f"| {module_name} | {check['score']} | {40 if name == 'statistical_quantity' else 20 if name in ['statistical_validity', 'findings_compliance'] else 10} | {result_emoji} |")
+            lines.append(f"| {module_name} | {check['score']} | {max_score} | {result_emoji} |")
 
         lines.extend([
             "",
@@ -797,12 +944,13 @@ class ReportValidator:
 
         for name, check in res["checks"].items():
             module_name = {
-                "statistical_quantity": "2.1 统计数量硬指标（40分）",
+                "statistical_quantity": "2.1 统计数量硬指标（30分）",
                 "statistical_validity": "2.2 统计结果有效性（20分）",
                 "findings_compliance": "2.3 数据发现合规性（20分）",
-                "suggestions_reasonableness": "2.4 课程建议合理性（10分）",
-                "report_completeness": "2.5 报告完整性（10分）"
-            }[name]
+                "business_analysis_completeness": "2.4 业务分析覆盖度（10分）",
+                "suggestions_quality": "2.5 建议质量（10分）",
+                "report_completeness": "2.6 报告完整性（10分）",
+            }.get(name, name)
             lines.append(f"### {module_name}")
             lines.append("")
             lines.append("| 检查项 | 实际值 | 要求 | 结果 | 说明 |")
