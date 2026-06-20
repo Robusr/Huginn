@@ -245,6 +245,7 @@ def run_agent(
     # ------------------------------
     print("\n[3/11] 模型第1轮：规划合法统计任务...")
     llm_client = LLMClient(offline_mode=offline_mode)
+    llm_audit = {"calls": [], "actual_rounds": 0}
     field_registry = build_planning_field_map(data_profile, domain_context)
     candidate_task_pool = build_candidate_task_pool(
         data_profile, field_registry, domain_context=domain_context
