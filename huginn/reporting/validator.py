@@ -358,12 +358,15 @@ class ReportValidator:
             explicitly_non_significant = any(
                 phrase in conclusion for phrase in ["不显著", "无显著", "未达显著", "未达到显著", "未达统计显著"]
             )
-            # 提取证据中的p值
-            p_match = re.search(r"p=([\d\.]+)", evidence)
+            # 提取证据中的p值（支持科学记数法：p=3.7e-118, p≈1.0e-55, p = 0.003）
+            p_match = re.search(r"p\s*[=≈]\s*([\d\.]+(?:[eE][+-]?\d+)?)", evidence)
             if p_match and not explicitly_non_significant:
-                p_val = float(p_match.group(1))
-                if p_val >= self.REQUIREMENTS["significant_p_threshold"]:
-                    invalid_significant.append(f"发现[{finding['conclusion']}]: p={p_val}")
+                try:
+                    p_val = float(p_match.group(1))
+                except ValueError:
+                    p_val = None
+                if p_val is not None and p_val >= self.REQUIREMENTS["significant_p_threshold"]:
+                    invalid_significant.append(f"发现[{finding['conclusion']}]: p={p_match.group(1)}")
                     continue
             for stat_key in self._item_stat_keys(finding, stat_result_by_key.keys()):
                 if explicitly_non_significant:
