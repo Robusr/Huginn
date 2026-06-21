@@ -26,15 +26,18 @@ logger = get_logger(__name__)
 
 
 def _safe_dataframe(df, **kwargs):
-    """将 DataFrame 中所有 list/dict 列转为字符串，避免 PyArrow 序列化崩溃。"""
+    """安全显示数据：若是 DataFrame 则清洗 list/dict 列；若是 list/dict 则直接展示。"""
     import pandas as pd
+    # 非 DataFrame → 直接展示
+    if not isinstance(df, pd.DataFrame):
+        return st.dataframe(df, **kwargs) if hasattr(st, 'dataframe') else st.write(df)
     df = df.copy()
     for col in df.columns:
         if df[col].dtype == object and len(df) > 0:
             sample = df[col].dropna().iloc[0] if not df[col].dropna().empty else None
             if isinstance(sample, (list, dict)):
                 df[col] = df[col].apply(lambda x: json.dumps(x, ensure_ascii=False) if isinstance(x, (list, dict)) else str(x) if x is not None else "")
-    return _safe_dataframe(df, **kwargs)
+    return st.dataframe(df, **kwargs)
 
 
 # 页面配置
