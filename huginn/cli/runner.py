@@ -175,7 +175,7 @@ def run_agent(
     chart_dir = run_dir / "charts"
 
     print("=" * 70)
-    print(f"   通用数据分析报告智能体 v1.2")
+    print(f"   通用数据分析报告智能体 v1.1")
     print(f"   文件: {fp.name}")
     print(f"   需求: {user_requirement}")
     print(f"   输出: {run_dir.resolve()}")

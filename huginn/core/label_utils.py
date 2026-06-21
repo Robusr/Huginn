@@ -301,7 +301,7 @@ def is_chinese_ordinal_column(series: "pd.Series") -> bool:
         if sample.nunique() > 15:
             return False
         # 必须包含评价性词汇（很/非常/比较/有点/较/不太/不），否则是名词性分类
-        evaluative = r"(很|非常|比较|有点|有些|较|不太|不|适中|一般|还行|凑合|基本|完全|极|超|特别|挺)"
+        evaluative = r"(?:很|非常|比较|有点|有些|较|不太|不|适中|一般|还行|凑合|基本|完全|极|超|特别|挺)"
         has_evaluative = sample.str.contains(evaluative, na=False)
         if has_evaluative.sum() < len(sample) * 0.3:
             return False
