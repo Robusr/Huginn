@@ -309,6 +309,17 @@ class DataLoader:
                 )
                 continue
 
+            # 中文有序文本编码 (如 "很容易"→1, "非常困难"→5)
+            try:
+                from huginn.core.label_utils import is_chinese_ordinal_column, encode_chinese_ordinal
+                if is_chinese_ordinal_column(series):
+                    encoded = encode_chinese_ordinal(df[col])
+                    if encoded is not df[col]:
+                        df[col] = encoded
+                        continue
+            except Exception:
+                pass
+
             # 尝试转数值
             converted = pd.to_numeric(series, errors="coerce")
             valid_ratio = converted.notna().sum() / len(series)

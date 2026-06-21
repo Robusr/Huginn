@@ -864,7 +864,7 @@ class LLMClient:
         self._last_distinctive_features = distinctive_features or {}
         context = domain_context or detect_domain_context(data_profile)
         if self.offline_mode:
-            return self._load_offline_findings_suggestions(stats_results)
+            return self._load_offline_findings_suggestions()
 
         sig_count = self._count_significant_results(stats_results)
 
@@ -1148,6 +1148,11 @@ class LLMClient:
             result = str(text)
             for old, new in replacements.items():
                 result = result.replace(old, new)
+            # 通用因果词替换（教育/通用领域）
+            result = result.replace("影响", "与...存在关联")
+            result = result.replace("导致", "伴随")
+            result = result.replace("造成", "伴随")
+            result = result.replace("引起", "与...存在关联")
             return result
 
         narrative.executive_summary = clean(narrative.executive_summary)

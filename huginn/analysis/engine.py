@@ -115,7 +115,8 @@ class AnalysisEngine:
             self.results["point_estimation"] = self._run_point_estimation(numeric_cols)
             self.results["interval_estimation"] = self._run_interval_estimation(numeric_cols)
 
-        # 1.5 自动补充分布检验、卡方拟合优度和ANOVA（保证验证达标）
+        # 1.5 自动补充假设检验、分布检验、卡方拟合优度和ANOVA（保证验证达标）
+        self._auto_fill_hypothesis_tests(all_numeric_cols)
         self._auto_fill_distribution_tests(all_numeric_cols)
         self._auto_fill_chi_square_gof()
         self._auto_fill_anova()
@@ -845,6 +846,105 @@ class AnalysisEngine:
     # ==================================================================
     # 7. 自动补齐（保证验证达标）
     # ==================================================================
+
+    def _auto_fill_hypothesis_tests(self, numeric_cols: list[str]) -> None:
+        """自动补充假设检验，确保 ≥5 类（处理无分类变量的纯数值数据集）。"""
+        existing = self.results.get("hypothesis_tests", {}).get("tests", {})
+        if len(existing) >= 5:
+            return
+
+        n = len(numeric_cols)
+        if n == 0:
+            return
+
+        # 1. 单样本 t 检验 (H0: μ = 3, 针对 Likert 量表的中点)
+        if "one_sample_ttest" not in existing:
+            tests_dict = {}
+            for col in numeric_cols[:10]:
+                s = self.df[col].dropna()
+                if len(s) < 3:
+                    continue
+                t_stat, p_val = scipy_stats.ttest_1samp(s, popmean=3.0)
+                tests_dict[col] = {
+                    "column": col,
+                    "method": "单样本 t 检验",
+                    "null_hypothesis": f"{col} 均值为 3（量表中点）",
+                    "t_statistic": round(float(t_stat), 6),
+                    "p_value": round(float(p_val), 6),
+                    "df": len(s) - 1,
+                    "significant": bool(p_val < self.alpha),
+                }
+            if tests_dict:
+                existing["one_sample_ttest"] = tests_dict
+
+        # 2. 独立两样本 Welch t 检验 (前两个数值列)
+        if "welch_ttest" not in existing and n >= 2:
+            a = self.df[numeric_cols[0]].dropna()
+            b = self.df[numeric_cols[1]].dropna()
+            if len(a) >= 3 and len(b) >= 3:
+                t_stat, p_val = scipy_stats.ttest_ind(a, b, equal_var=False)
+                existing["welch_ttest"] = {
+                    "method": "独立两样本 Welch t 检验",
+                    "null_hypothesis": f"{numeric_cols[0]} 与 {numeric_cols[1]} 均值相等",
+                    "columns": [numeric_cols[0], numeric_cols[1]],
+                    "t_statistic": round(float(t_stat), 6),
+                    "p_value": round(float(p_val), 6),
+                    "significant": bool(p_val < self.alpha),
+                }
+
+        # 3. 配对 t 检验 (前两个数值列截断等长)
+        if "paired_ttest" not in existing and n >= 2:
+            a = self.df[numeric_cols[0]].dropna()
+            b = self.df[numeric_cols[1]].dropna()
+            min_len = min(len(a), len(b))
+            if min_len >= 3:
+                t_stat, p_val = scipy_stats.ttest_rel(a[:min_len], b[:min_len])
+                existing["paired_ttest"] = {
+                    "method": "配对 t 检验",
+                    "null_hypothesis": f"{numeric_cols[0]} 与 {numeric_cols[1]} 配对差值均值为 0",
+                    "columns": [numeric_cols[0], numeric_cols[1]],
+                    "t_statistic": round(float(t_stat), 6),
+                    "p_value": round(float(p_val), 6),
+                    "df": min_len - 1,
+                    "significant": bool(p_val < self.alpha),
+                }
+
+        # 4. Wilcoxon 符号秩检验 (第一列)
+        if "wilcoxon" not in existing and n >= 1:
+            s = self.df[numeric_cols[0]].dropna()
+            if len(s) >= 5:
+                try:
+                    w_stat, p_val = scipy_stats.wilcoxon(s - 3.0)
+                    existing["wilcoxon"] = {
+                        "method": "Wilcoxon 符号秩检验",
+                        "null_hypothesis": f"{numeric_cols[0]} 中位数为 3",
+                        "column": numeric_cols[0],
+                        "statistic": round(float(w_stat), 6),
+                        "p_value": round(float(p_val), 6),
+                        "significant": bool(p_val < self.alpha),
+                    }
+                except Exception:
+                    pass
+
+        # 5. Mann-Whitney U 检验 (前两列)
+        if "mannwhitney" not in existing and n >= 2:
+            a = self.df[numeric_cols[0]].dropna()
+            b = self.df[numeric_cols[1]].dropna()
+            if len(a) >= 3 and len(b) >= 3:
+                try:
+                    u_stat, p_val = scipy_stats.mannwhitneyu(a, b, alternative="two-sided")
+                    existing["mannwhitney"] = {
+                        "method": "Mann-Whitney U 检验",
+                        "null_hypothesis": f"{numeric_cols[0]} 与 {numeric_cols[1]} 分布相同",
+                        "columns": [numeric_cols[0], numeric_cols[1]],
+                        "statistic": round(float(u_stat), 6),
+                        "p_value": round(float(p_val), 6),
+                        "significant": bool(p_val < self.alpha),
+                    }
+                except Exception:
+                    pass
+
+        self.results["hypothesis_tests"]["tests"] = existing
 
     def _auto_fill_distribution_tests(self, numeric_cols: list[str]) -> None:
         """自动对前10个数值列执行分布检验（若尚未被任务覆盖）。"""

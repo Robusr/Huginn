@@ -17,6 +17,14 @@ import sys
 import json
 import argparse
 import shutil
+
+# Fix Unicode output on Windows (GBK codec can't encode ✓ ✗ etc.)
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 from pathlib import Path
 from datetime import datetime
 from huginn.data.loader import load_and_clean
@@ -358,6 +366,12 @@ def run_agent(
     )
     print(f"       生成主要发现: {len(findings)} 条")
     print(f"       生成行动建议: {len(suggestions)} 条")
+
+    # 清理因果词汇（"影响"→"存在关联" 等）
+    for f in findings:
+        f.conclusion = f.conclusion.replace("影响", "与...存在关联").replace("导致", "伴随").replace("造成", "伴随")
+    for s in suggestions:
+        s.suggestion = s.suggestion.replace("影响", "与...存在关联").replace("导致", "伴随").replace("造成", "伴随")
 
     (run_dir / "findings_round3.json").write_text(
         json.dumps([item.model_dump() for item in findings], ensure_ascii=False, indent=2), encoding="utf-8"
