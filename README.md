@@ -21,7 +21,7 @@ Automatically identifies your data domain and adapts the entire pipeline:
 - **Retail Sales** (`retail_sales`) — transactions, profit/loss, discounts, categories
 - **General Business** (`general_business`) — fallback for any structured data
 
-### 2. Chinese Ordinal Text Auto-Encoding ⭐ NEW
+### 2. Chinese Ordinal Text Auto-Encoding [NEW]
 Survey platforms export Chinese Likert responses as raw text ("非常困难", "比较容易", "一般" etc.). Huginn automatically:
 - Detects Chinese ordinal response columns (evaluative words + ≤15 unique values)
 - Encodes them to numeric values (1–5) using a 5-layer fallback pipeline
