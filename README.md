@@ -1,7 +1,6 @@
 # Huginn - AI-Powered Multi-Domain Exploratory Data Analysis Agent
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Version-1.2.0-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/Python-3.9+-blue.svg" alt="Python Version">
   <img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License">
   <img src="https://img.shields.io/badge/DeepSeek-API-orange.svg" alt="DeepSeek API">
@@ -32,16 +31,16 @@ Survey platforms export Chinese Likert responses as raw text ("非常困难", "�
 ### 3. 11-Step Fully Automated Pipeline
 ```
 Step 1  → Data loading & cleaning (CSV/Excel, auto-encoding detection)
-Step 2  → Data profiling, domain detection & field role registry
-Step 3  → LLM Round 1 — Task planning (select 8-12 from candidate pool)
+Step 2  → Data profiling & domain detection
+Step 3  → LLM Round 1 — Task planning (8-12 candidate analysis tasks)
 Step 4  → Task filtering & validation
-Step 5  → Statistical analysis execution (scipy + statsmodels) + distinctive feature mining
-Step 6  → LLM Round 2 — Problem & anomaly discovery
-Step 7  → Chart generation (bar, box, scatter, heatmap)
-Step 8  → LLM Round 3 — Evidence-based findings & suggestions
-Step 9  → LLM Round 4 — Report writing & language polishing
-Step 10 → Report generation (draft: MD + Word + PDF)
-Step 11 → Compliance verification (100-point) + final report export
+Step 5  → Statistical analysis execution (scipy + statsmodels)
+Step 6  → Distinctive feature mining
+Step 7  → LLM Round 2 — Problem discovery
+Step 8  → Chart generation (bar, box, scatter, heatmap)
+Step 9  → LLM Round 3 — Evidence-based findings & suggestions
+Step 10 → LLM Round 4 — Report writing & language polishing
+Step 11 → Report generation + compliance verification
 ```
 
 ### 4. Academic-Grade Statistical Analysis
@@ -151,7 +150,7 @@ outputs/20260622_143022_course_survey/
 └── validation_report.md         # Human-readable validation
 ```
 
-## Recent Fixes (v1.1 → v1.2)
+## Recent Fixes (v1.2)
 
 | Fix | File | Description |
 |-----|------|-------------|
@@ -166,16 +165,14 @@ outputs/20260622_143022_course_survey/
 
 ## Project Structure
 ```
-.
+huginn/
 ├── app.py                       # Streamlit launch entry
-├── main.py                      # Legacy entry (deprecated, delegates to cli/runner)
+├── main.py                      # Legacy no-LLM pipeline (5-step)
 ├── pyproject.toml               # Package config
 ├── requirements.txt             # Dependencies
-├── test_edu_data.csv            # Sample education survey data
 │
 ├── huginn/                      # Core package
-│   ├── cli/
-│   │   └── runner.py            # 11-step main pipeline controller
+│   ├── cli/runner.py            # 11-step main pipeline controller
 │   ├── core/
 │   │   ├── config.py            # 60+ centralized config items
 │   │   ├── logger.py            # Unified logging
@@ -189,23 +186,23 @@ outputs/20260622_143022_course_survey/
 │   │   └── fields.py            # Field role inference (15 role types)
 │   ├── planning/
 │   │   ├── task_planner.py      # Task validation & filtering
-│   │   ├── analysis_planning.py # Candidate task pool generator
+│   │   ├── analysis_planning.py # Candidate task pool
 │   │   └── feature_miner.py     # Distinctive signal mining
 │   ├── analysis/
-│   │   ├── engine.py            # Statistical inference engine (scipy + statsmodels)
-│   │   └── charts.py            # Chart generation (bar, box, scatter, heatmap)
+│   │   ├── engine.py            # Statistical inference engine
+│   │   └── charts.py            # Chart generation (4 types)
 │   ├── llm/
-│   │   └── client.py            # DeepSeek API client (4-round orchestration + offline mode)
+│   │   └── client.py            # DeepSeek API (4-round orchestration)
 │   ├── reporting/
 │   │   ├── generator.py         # Report generator (MD + Word + PDF)
 │   │   └── validator.py         # 100-point compliance validator
 │   └── web/
-│       └── app.py               # Streamlit web interface (file upload → analysis → download)
+│       └── app.py               # Streamlit web interface
 │
 ├── tests/                       # 38 unit tests
-├── platforms/                   # AI assistant adapter files (Cursor, Copilot, Aider, Windsurf)
-├── skill/                       # Claude Code skill definition + 4 step reference prompts
-└── outputs/                     # Analysis results (auto-created per run)
+├── platforms/                   # AI assistant adapter files
+├── skill/                       # Claude Code skill definition
+└── outputs/                     # Analysis results (auto-created)
 ```
 
 ---

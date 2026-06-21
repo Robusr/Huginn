@@ -24,6 +24,19 @@ from huginn.core.logger import get_logger
 
 logger = get_logger(__name__)
 
+
+def _safe_dataframe(df, **kwargs):
+    """将 DataFrame 中所有 list/dict 列转为字符串，避免 PyArrow 序列化崩溃。"""
+    import pandas as pd
+    df = df.copy()
+    for col in df.columns:
+        if df[col].dtype == object and len(df) > 0:
+            sample = df[col].dropna().iloc[0] if not df[col].dropna().empty else None
+            if isinstance(sample, (list, dict)):
+                df[col] = df[col].apply(lambda x: json.dumps(x, ensure_ascii=False) if isinstance(x, (list, dict)) else str(x) if x is not None else "")
+    return _safe_dataframe(df, **kwargs)
+
+
 # 页面配置
 st.set_page_config(
     page_title=Config.APP_PAGE_TITLE,
@@ -242,7 +255,7 @@ def main():
                         "缺失": f"{f.get('missing_pct', 0):.1f}%",
                         "唯一值": f.get("unique"),
                     })
-                st.dataframe(field_data, width="stretch")
+                _safe_dataframe(field_data, width="stretch")
             else:
                 st.info("未找到数据画像文件")
 
@@ -278,7 +291,7 @@ def main():
                                 "标准差": f"{info.get('std', 0):.4f}",
                                 "中位数": f"{info.get('median', 0):.4f}",
                             })
-                    st.dataframe(pe_data, width="stretch")
+                    _safe_dataframe(pe_data, width="stretch")
 
                 # 假设检验显著结果
                 ht = stats.get("hypothesis_tests", {}).get("tests", {})
@@ -300,7 +313,7 @@ def main():
                                 "p值": f"**{p:.4f}**",
                             })
                 if sig_tests:
-                    st.dataframe(sig_tests, width="stretch")
+                    _safe_dataframe(sig_tests, width="stretch")
                 else:
                     st.info("无显著假设检验结果")
 
@@ -324,7 +337,7 @@ def main():
                             })
                 if sig_anova:
                     st.subheader("ANOVA 显著结果")
-                    st.dataframe(sig_anova, width="stretch")
+                    _safe_dataframe(sig_anova, width="stretch")
 
                 # 数量自查
                 cc = stats.get("counts_check", {})
