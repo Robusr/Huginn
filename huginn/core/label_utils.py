@@ -181,3 +181,136 @@ def _normalize_spaces(text: str) -> str:
     text = re.sub(r"\s+([，。；：、）])", r"\1", text)
     text = re.sub(r"([（])\s+", r"\1", text)
     return text
+
+
+# ═══════════════════════════════════════════════════════════
+# 中文有序文本 → 数值编码（解决 Likert 量表识别的核心功能）
+# ═══════════════════════════════════════════════════════════
+
+_CHINESE_ORDINAL_DOMAINS = [
+    # 难度 (1=容易 → 5=困难)
+    [["非常容易", "很容易", "比较容易", "容易", "简单"],
+     ["有点容易", "有些容易", "有点简单", "比较简单"],
+     ["难度适中"],
+     ["有点困难", "有些困难", "有点难", "较难", "有点难度"],
+     ["非常困难", "很困难", "非常难", "极难"]],
+    # 重要性/满意度/掌握度 (1=低 → 5=高)
+    [["完全不重要", "很不重要", "非常不满意", "很不满意", "非常差", "很差", "完全没掌握", "非常薄弱", "很薄弱"],
+     ["有点不重要", "不太重要", "有些不重要", "不满意", "不太满意", "比较不满意", "较差", "比较差", "不太好", "有点差", "偏弱", "比较薄弱"],
+     ["一般", "中等", "适中", "还行", "凑合", "基本掌握", "正常", "难度适中"],
+     ["比较重要", "较重要", "有点重要", "重要", "满意", "比较满意", "较满意", "挺好", "较好", "比较好", "不错", "偏强", "较强"],
+     ["非常重要", "很重要", "极为重要", "非常满意", "很满意", "极为满意", "很好", "非常好", "掌握得很好", "极好", "非常强", "很强", "极强"]],
+    # 时间投入 (1=少 → 5=多)
+    [["几乎不花时间", "不花时间", "很少", "花的时间很少"],
+     ["花较少时间", "花的时间较少", "较少", "比较少"],
+     ["一般", "适中", "花的时间适中"],
+     ["花较多时间", "花的时间较多", "较多", "比较多", "多"],
+     ["花非常多时间", "花的时间很多", "非常多", "很多", "大量"]],
+    # 频率 (1=从不 → 5=总是)
+    [["从不", "几乎没有", "完全不"],
+     ["偶尔", "很少", "有时"],
+     ["经常", "较多", "比较多"],
+     ["频繁"],
+     ["总是", "非常频繁", "每次"]],
+]
+
+
+def encode_chinese_ordinal(series: "pd.Series") -> "pd.Series":
+    """将中文有序文本列编码为 1~N 的数值列。
+    如果列中大部分值无法识别，返回原列。
+    """
+    import pandas as pd
+    import numpy as np
+
+    if not pd.api.types.is_object_dtype(series) and not pd.api.types.is_string_dtype(series):
+        return series
+
+    s = series.astype(str).str.strip()
+    # 去掉 A./B./C. 前缀
+    s = s.str.replace(r"^[A-Za-z]\s*[\.、]\s*", "", regex=True)
+    # 去掉 \"手机提交\" 等非评价文本（含中文字且不是纯数字的才处理）
+    has_chinese = s.str.contains(r"[一-鿿]", na=False)
+    if has_chinese.sum() < len(s) * 0.5:
+        return series
+
+    encoded = pd.Series(np.nan, index=series.index, dtype=float)
+
+    # 按关键词长度降序精确匹配
+    exact_map = {}
+    for domain in _CHINESE_ORDINAL_DOMAINS:
+        for lvl, keywords in enumerate(domain):
+            for kw in keywords:
+                if kw not in exact_map or len(kw) > len(list(exact_map.keys())[list(exact_map.values()).index(lvl + 1)]):
+                    exact_map[kw] = lvl + 1
+
+    for kw in sorted(exact_map, key=len, reverse=True):
+        mask = (s == kw) & encoded.isna()
+        encoded[mask] = float(exact_map[kw])
+
+    # 子串匹配
+    for domain in _CHINESE_ORDINAL_DOMAINS:
+        for idx in range(len(domain) - 1, -1, -1):
+            keywords_sorted = sorted(domain[idx], key=len, reverse=True)
+            pattern = "|".join(re.escape(kw) for kw in keywords_sorted)
+            mask = s.str.contains(pattern, na=False) & encoded.isna()
+            encoded[mask] = float(idx + 1)
+
+    # 纯数字兜底
+    num_mask = encoded.isna() & s.str.match(r"^-?\d+(\.\d+)?$", na=False)
+    encoded[num_mask] = pd.to_numeric(s[num_mask], errors="coerce")
+
+    # 字母编号 (A/B/C)
+    alpha_mask = encoded.isna() & s.str.match(r"^[A-Za-z]+$", na=False)
+    if alpha_mask.any():
+        uniq = sorted(s[alpha_mask].unique())
+        for i, v in enumerate(uniq):
+            encoded[(s == v) & encoded.isna()] = float(i + 1)
+
+    # 剩余未知值按出现顺序赋序数
+    still_na = encoded.isna()
+    if still_na.any():
+        uniq_rest = sorted(s[still_na].dropna().unique())
+        for i, v in enumerate(uniq_rest):
+            encoded[(s == v) & encoded.isna()] = float(i + 1)
+
+    # 检查转换率
+    valid_ratio = encoded.notna().sum() / max(len(series), 1)
+    if valid_ratio < 0.6:
+        return series
+
+    return encoded
+
+
+def is_chinese_ordinal_column(series: "pd.Series") -> bool:
+    """判断一列是否可被 encode_chinese_ordinal 有效编码。"""
+    import pandas as pd
+    if not hasattr(series, "astype"):
+        return False
+    # 只处理 object/string 类型的列
+    if not (pd.api.types.is_object_dtype(series) or pd.api.types.is_string_dtype(series)):
+        return False
+    # 必须包含中文字符
+    try:
+        sample = series.dropna().astype(str)
+        if len(sample) == 0:
+            return False
+        has_chinese = sample.str.contains(r"[一-鿿]", na=False)
+        if has_chinese.sum() < len(sample) * 0.4:
+            return False
+        # 唯一值不能太多（真正的 Likert 量表通常 ≤10 个不同回答）
+        if sample.nunique() > 15:
+            return False
+        # 必须包含评价性词汇（很/非常/比较/有点/较/不太/不），否则是名词性分类
+        evaluative = r"(很|非常|比较|有点|有些|较|不太|不|适中|一般|还行|凑合|基本|完全|极|超|特别|挺)"
+        has_evaluative = sample.str.contains(evaluative, na=False)
+        if has_evaluative.sum() < len(sample) * 0.3:
+            return False
+    except Exception:
+        return False
+    try:
+        result = encode_chinese_ordinal(series)
+        if result is series:
+            return False
+        return result.notna().sum() / max(len(result), 1) >= 0.6
+    except Exception:
+        return False
