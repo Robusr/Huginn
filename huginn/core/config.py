@@ -205,5 +205,5 @@ class Config:
     # 应用默认值
     # =========================================================================
     DEFAULT_REQUIREMENT: str = "根据数据生成包含主要发现、图表分析和行动建议的正式报告"
-    APP_VERSION: str = "v1.0"
+    APP_VERSION: str = "v1.2"
     APP_PAGE_TITLE: str = "Huginn - 通用数据分析报告智能体"
