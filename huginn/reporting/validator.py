@@ -375,11 +375,16 @@ class ReportValidator:
             explicitly_non_significant = any(
                 phrase in conclusion for phrase in [
                     "不显著", "无显著", "未达显著", "未达到显著", "未达统计显著",
+                    "未达到统计显著", "未表现出显著", "未呈现显著", "差异不显著",
                     "未检测到显著", "未见显著", "没有显著", "无明显差异", "无统计学意义",
+                    "服从均匀分布", "服从正态分布", "符合分布", "与...分布一致",
                 ]
             )
-            # 提取证据中的p值（支持科学记数法：p=3.7e-118, p≈1.0e-55, p = 0.003）
-            p_match = re.search(r"p\s*[=≈]\s*([\d\.]+(?:[eE][+-]?\d+)?)", evidence)
+            # 结论中 p>α 的也视为显式说明非显著
+            if re.search(r"p\s*>\s*0\.0", conclusion):
+                explicitly_non_significant = True
+            # 提取证据中的p值（支持科学记数法：p=3.7e-118, p≈1.0e-55, p = 0.003, p>0.05）
+            p_match = re.search(r"p\s*[=≈>]\s*([\d\.]+(?:[eE][+-]?\d+)?)", evidence)
             if p_match and not explicitly_non_significant:
                 try:
                     p_val = float(p_match.group(1))
