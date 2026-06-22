@@ -194,7 +194,7 @@ huginn/
 │   ├── llm/
 │   │   └── client.py            # DeepSeek API (4-round orchestration)
 │   ├── reporting/
-│   │   ├── generator.py         # Report generator (MD + Word + PDF)
+│   │   ├── generator.py         # Report generator (MD+Word+PDF)
 │   │   └── validator.py         # 100-point compliance validator
 │   └── web/
 │       └── app.py               # Streamlit web interface
