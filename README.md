@@ -260,5 +260,5 @@ pytest tests/ -v -q       # Compact output
 MIT License. See [LICENSE](LICENSE).
 
 <p align="center">
-  <sub>Built by Robusr · Maintained by the Huginn Team</sub>
+  <sub>Built by Robusr👨🏻‍💻</sub>
 </p>
