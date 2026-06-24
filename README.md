@@ -133,8 +133,8 @@ outputs/20260622_143022_course_survey/
 ├── stats_results.json           # All statistical computation results
 ├── valid_tasks.json             # Executed analysis tasks
 ├── distinctive_features.json    # Mined data signals
-├── findings.json                # Evidence-based findings (LLM)
-├── suggestions.json             # Actionable suggestions (LLM)
+├── findings.json                # Evidence-based findings(LLM)
+├── suggestions.json             # Actionable suggestions(LLM)
 ├── discovered_problems.json     # Problems flagged by LLM
 ├── report_narrative.json        # Polished report narrative
 ├── llm_call_audit.json          # 4-round LLM call audit trail
