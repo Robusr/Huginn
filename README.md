@@ -1,4 +1,8 @@
+<div align="center">
+
 # Huginn - AI-Powered Multi-Domain Exploratory Data Analysis Agent
+
+</div>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.9+-blue.svg" alt="Python Version">
